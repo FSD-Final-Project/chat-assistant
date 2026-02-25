@@ -1,0 +1,21 @@
+{
+  "name": "rocket-chat-openai-bot",
+  "version": "1.0.0",
+  "description": "Rocket.Chat bot that replies with OpenAI based on DM context",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "dev": "tsx watch src/main.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "openai": "^5.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}
