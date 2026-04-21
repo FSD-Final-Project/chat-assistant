@@ -1,5 +1,6 @@
 import { Home, BarChart3, TrendingUp, Settings, LogOut, ChevronDown } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "@/auth/AuthProvider";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 
@@ -13,8 +14,17 @@ const navItems = [
 export function Sidebar() {
     const location = useLocation();
     const navigate = useNavigate();
+    const { user, signOut } = useAuth();
 
-    const handleLogout = () => {
+    const initials = user?.name
+        ?.split(" ")
+        .map((part) => part[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase() ?? "U";
+
+    const handleLogout = async () => {
+        await signOut();
         navigate("/login");
     };
 
@@ -24,15 +34,15 @@ export function Sidebar() {
             <div className="p-6">
                 <div className="flex items-center gap-3">
                     <Avatar className="h-12 w-12 border-2 border-primary/30">
-                        <AvatarImage src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop" />
-                        <AvatarFallback>GY</AvatarFallback>
+                        <AvatarImage src={user?.picture} />
+                        <AvatarFallback>{initials}</AvatarFallback>
                     </Avatar>
                     <div className="flex-1">
                         <div className="flex items-center gap-1">
-                            <span className="font-semibold text-sidebar-foreground">Guy Yablonka</span>
+                            <span className="font-semibold text-sidebar-foreground">{user?.name ?? "Workspace User"}</span>
                             <ChevronDown className="h-4 w-4 text-muted-foreground" />
                         </div>
-                        <span className="text-sm text-muted-foreground">guy@email.com</span>
+                        <span className="text-sm text-muted-foreground">{user?.email ?? "No email available"}</span>
                     </div>
                 </div>
             </div>
