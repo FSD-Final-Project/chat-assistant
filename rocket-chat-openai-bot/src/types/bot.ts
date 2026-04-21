@@ -7,8 +7,8 @@ export interface ContextEntry {
 
 export interface BotConfig {
   rcUrl: string;
-  rcUser: string;
-  rcPassword: string;
+  rcUserToken: string;
+  rcUserId: string;
   openAiApiKey: string;
   openAiModel: string;
   systemPrompt: string;

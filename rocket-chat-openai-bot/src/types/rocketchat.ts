@@ -13,14 +13,6 @@ export interface RocketChatDirectRoom {
   _id: string;
 }
 
-export interface RocketChatLoginResponse {
-  status: string;
-  data?: {
-    authToken: string;
-    userId: string;
-  };
-}
-
 export interface RocketChatImListResponse {
   ims?: RocketChatDirectRoom[];
 }
@@ -28,4 +20,3 @@ export interface RocketChatImListResponse {
 export interface RocketChatMessagesResponse {
   messages?: RocketChatMessage[];
 }
-

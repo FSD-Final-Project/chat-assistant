@@ -7,6 +7,7 @@ import { ReplyService } from "./replyService.js";
 
 export class BotRunner {
   private readonly state = new BotState();
+  private readonly initializedRoomIds = new Set<string>();
 
   constructor(
     private readonly config: BotConfig,
@@ -15,15 +16,14 @@ export class BotRunner {
   ) {}
 
   async start(): Promise<void> {
-    await this.login();
+    this.initializeAuth();
     console.log(`Starting poll loop (${this.config.pollIntervalMs} ms)`);
     await this.runLoop();
   }
 
-  private async login(): Promise<void> {
-    await this.rocketChatClient.login();
+  private initializeAuth(): void {
     this.state.userId = this.rocketChatClient.currentUserId;
-    console.log(`Logged in as '${this.config.rcUser}' (userId=${this.state.userId})`);
+    console.log(`Using Rocket.Chat token auth (userId=${this.state.userId})`);
   }
 
   private async runLoop(): Promise<void> {
@@ -36,12 +36,6 @@ export class BotRunner {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Polling error: ${message}`);
-
-        if (message.includes("401") || message.toLowerCase().includes("unauthorized")) {
-          this.rocketChatClient.clearAuth();
-          this.state.userId = "";
-          await this.login();
-        }
       }
 
       await sleep(this.config.pollIntervalMs);
@@ -50,6 +44,21 @@ export class BotRunner {
 
   private async processRoom(roomId: string): Promise<void> {
     const messages = await this.rocketChatClient.getDirectMessages(roomId, 20);
+
+    if (!this.initializedRoomIds.has(roomId)) {
+      for (const message of messages) {
+        if (message._id) {
+          this.state.markProcessed(message._id);
+        }
+      }
+
+      this.initializedRoomIds.add(roomId);
+      if (messages.length > 0) {
+        console.log(`[${roomId}] Skipped ${messages.length} existing message(s) on first sync`);
+      }
+      return;
+    }
+
     messages.reverse();
 
     for (const message of messages) {
@@ -101,4 +110,3 @@ export class BotRunner {
     return true;
   }
 }
-

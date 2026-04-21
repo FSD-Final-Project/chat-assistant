@@ -2,41 +2,15 @@ import type { BotConfig } from "../types/bot.js";
 import type {
   RocketChatDirectRoom,
   RocketChatImListResponse,
-  RocketChatLoginResponse,
   RocketChatMessage,
   RocketChatMessagesResponse,
 } from "../types/rocketchat.js";
 
 export class RocketChatClient {
-  private authToken = "";
-  private userId = "";
-
   constructor(private readonly config: BotConfig) {}
 
   get currentUserId(): string {
-    return this.userId;
-  }
-
-  clearAuth(): void {
-    this.authToken = "";
-    this.userId = "";
-  }
-
-  async login(): Promise<void> {
-    const json = await this.request<RocketChatLoginResponse>("/api/v1/login", {
-      method: "POST",
-      body: {
-        user: this.config.rcUser,
-        password: this.config.rcPassword,
-      },
-    });
-
-    if (json.status !== "success" || !json.data?.authToken || !json.data.userId) {
-      throw new Error(`Login failed: ${JSON.stringify(json)}`);
-    }
-
-    this.authToken = json.data.authToken;
-    this.userId = json.data.userId;
+    return this.config.rcUserId;
   }
 
   async listDirectRooms(): Promise<RocketChatDirectRoom[]> {
@@ -65,11 +39,11 @@ export class RocketChatClient {
     path: string,
     options: { method?: string; body?: Record<string, unknown> } = {}
   ): Promise<T> {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (this.authToken) {
-      headers["X-Auth-Token"] = this.authToken;
-      headers["X-User-Id"] = this.userId;
-    }
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "X-Auth-Token": this.config.rcUserToken,
+      "X-User-Id": this.config.rcUserId,
+    };
 
     const response = await fetch(`${this.config.rcUrl}${path}`, {
       method: options.method ?? "GET",
@@ -85,4 +59,3 @@ export class RocketChatClient {
     return (await response.json()) as T;
   }
 }
-

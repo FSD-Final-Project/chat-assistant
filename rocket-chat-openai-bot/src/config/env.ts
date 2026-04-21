@@ -48,8 +48,8 @@ function normalizeBaseUrl(url: string): string {
 export function loadConfig(): BotConfig {
   return {
     rcUrl: normalizeBaseUrl(getRequiredEnv("RC_URL")),
-    rcUser: getRequiredEnv("RC_USER"),
-    rcPassword: getRequiredEnv("RC_PASSWORD"),
+    rcUserToken: getRequiredEnv("ROCKET_USER_TOKEN"),
+    rcUserId: getRequiredEnv("ROCKET_USER_ID"),
     openAiApiKey: getRequiredEnv("OPENAI_API_KEY"),
     openAiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
     systemPrompt: process.env.SYSTEM_PROMPT ?? "You are a helpful Rocket.Chat assistant.",
