@@ -8,7 +8,7 @@ Chat Assistant is a full-stack workspace with:
 
 ## Projects
 
-- `src/`: frontend client
+- `client/`: frontend client
 - `server/`: NestJS backend for Google OAuth and session auth
 - `rocket-chat-openai-bot/`: Rocket.Chat bot service
 - `rocketchat-compose/`: local Rocket.Chat docker setup
