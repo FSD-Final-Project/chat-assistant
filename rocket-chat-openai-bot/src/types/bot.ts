@@ -5,10 +5,16 @@ export interface ContextEntry {
   text: string;
 }
 
+export interface RocketChatAuth {
+  email?: string;
+  userToken: string;
+  userId: string;
+}
+
 export interface BotConfig {
   rcUrl: string;
-  rcUserToken: string;
-  rcUserId: string;
+  mainServerUrl: string;
+  internalApiKey: string;
   openAiApiKey: string;
   openAiModel: string;
   systemPrompt: string;

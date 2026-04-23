@@ -1,4 +1,4 @@
-import type { BotConfig } from "../types/bot.js";
+import type { BotConfig, RocketChatAuth } from "../types/bot.js";
 import type {
   RocketChatDirectRoom,
   RocketChatImListResponse,
@@ -7,10 +7,17 @@ import type {
 } from "../types/rocketchat.js";
 
 export class RocketChatClient {
-  constructor(private readonly config: BotConfig) {}
+  constructor(
+    private readonly config: BotConfig,
+    private readonly auth: RocketChatAuth
+  ) {}
 
   get currentUserId(): string {
-    return this.config.rcUserId;
+    return this.auth.userId;
+  }
+
+  get identityLabel(): string {
+    return this.auth.email ?? this.auth.userId;
   }
 
   async listDirectRooms(): Promise<RocketChatDirectRoom[]> {
@@ -18,9 +25,19 @@ export class RocketChatClient {
     return json.ims ?? [];
   }
 
-  async getDirectMessages(roomId: string, count = 20): Promise<RocketChatMessage[]> {
-    const sort = encodeURIComponent(JSON.stringify({ ts: -1 }));
-    const query = `/api/v1/im.messages?roomId=${encodeURIComponent(roomId)}&count=${count}&sort=${sort}`;
+  async getDirectMessages(roomId: string, oldest?: Date, count = 100): Promise<RocketChatMessage[]> {
+    const sort = encodeURIComponent(JSON.stringify({ ts: 1 }));
+    const params = new URLSearchParams({
+      roomId,
+      count: String(count),
+      sort,
+    });
+
+    if (oldest) {
+      params.set("oldest", new Date(oldest.getTime() + 1).toISOString());
+    }
+
+    const query = `/api/v1/im.history?${params.toString()}`;
     const json = await this.request<RocketChatMessagesResponse>(query);
     return json.messages ?? [];
   }
@@ -41,8 +58,8 @@ export class RocketChatClient {
   ): Promise<T> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      "X-Auth-Token": this.config.rcUserToken,
-      "X-User-Id": this.config.rcUserId,
+      "X-Auth-Token": this.auth.userToken,
+      "X-User-Id": this.auth.userId,
     };
 
     const response = await fetch(`${this.config.rcUrl}${path}`, {

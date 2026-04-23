@@ -20,8 +20,8 @@ cp .env.example .env
 Set values in `.env`:
 
 - `RC_URL`: Rocket.Chat URL (example: `http://localhost:3000`)
-- `ROCKET_USER_TOKEN`: Rocket.Chat personal access token or auth token for the bot user
-- `ROCKET_USER_ID`: Rocket.Chat user id for that same bot user
+- `MAIN_SERVER_URL`: Nest server URL (example: `http://localhost:3001`)
+- `INTERNAL_API_KEY`: same internal API key used by the Nest server
 - `OPENAI_API_KEY`: your OpenAI key
 - `OPENAI_MODEL`: model name (default: `gpt-4.1-mini`)
 - `SYSTEM_PROMPT`: assistant behavior
@@ -57,7 +57,10 @@ npm start
 
 ## Notes
 
-- This version uses token-based Rocket.Chat REST auth with `X-Auth-Token` and `X-User-Id`.
+- This version fetches all stored Rocket.Chat integrations from the main Nest server at startup.
+- The main server reads from MongoDB and decrypts the stored Rocket.Chat credentials.
+- The bot starts one polling runner per integrated app user.
+- It still uses token-based Rocket.Chat REST auth with `X-Auth-Token` and `X-User-Id`.
 - This version uses REST polling (`im.list` + `im.messages`) for simplicity.
 - It ignores bot's own messages to prevent reply loops.
 - Context is kept in memory and resets when the process restarts.
