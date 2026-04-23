@@ -19,6 +19,8 @@ export interface BotConfig {
   openAiModel: string;
   systemPrompt: string;
   pollIntervalMs: number;
+  rcRequestIntervalMs: number;
+  rcRetryBackoffMs: number;
   maxContextMessages: number;
   botTriggerPrefix: string;
   mirrorUserStyle: boolean;

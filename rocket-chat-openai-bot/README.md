@@ -26,6 +26,8 @@ Set values in `.env`:
 - `OPENAI_MODEL`: model name (default: `gpt-4.1-mini`)
 - `SYSTEM_PROMPT`: assistant behavior
 - `POLL_INTERVAL_MS`: polling interval
+- `RC_REQUEST_INTERVAL_MS`: minimum delay between Rocket.Chat API requests across all bot runners
+- `RC_RETRY_BACKOFF_MS`: fallback backoff used when Rocket.Chat returns `429`
 - `MAX_CONTEXT_MESSAGES`: number of recent turns to keep per DM room
 - `BOT_TRIGGER_PREFIX`: optional trigger prefix (empty means reply to every DM)
 - `MIRROR_USER_STYLE`: if `true`, bot tries to match your writing style
