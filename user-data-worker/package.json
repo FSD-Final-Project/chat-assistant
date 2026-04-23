@@ -1,8 +1,8 @@
 {
-  "name": "chat-assistant-server",
+  "name": "chat-assistant-user-data-worker",
   "version": "1.0.0",
   "private": true,
-  "description": "NestJS backend for Google SSO",
+  "description": "NestJS worker for syncing Rocket.Chat user data through the main server",
   "license": "ISC",
   "scripts": {
     "build": "nest build",
@@ -13,14 +13,6 @@
     "@nestjs/common": "^11.0.0",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.0.0",
-    "@nestjs/mongoose": "^11.0.3",
-    "@nestjs/passport": "^11.0.3",
-    "@nestjs/platform-express": "^11.0.0",
-    "express": "^5.1.0",
-    "express-session": "^1.18.1",
-    "mongoose": "^8.15.1",
-    "passport": "^0.7.0",
-    "passport-google-oauth20": "^2.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },
@@ -28,11 +20,7 @@
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.0",
-    "@types/express": "^5.0.0",
-    "@types/express-session": "^1.18.0",
     "@types/node": "^22.16.5",
-    "@types/passport": "^1.0.17",
-    "@types/passport-google-oauth20": "^2.0.16",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3"
   }

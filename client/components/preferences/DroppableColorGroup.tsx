@@ -9,6 +9,7 @@ export interface GroupMember {
     id: string;
     name: string;
     avatars: string[];
+    roomType?: string;
 }
 
 interface DroppableColorGroupProps {
@@ -41,19 +42,19 @@ export function DroppableColorGroup({ color, members }: DroppableColorGroupProps
     return (
         <div
             className={cn(
-                "light-card rounded-xl overflow-hidden animate-fade-in transition-all duration-200",
+                "light-card h-[200px] rounded-xl overflow-hidden animate-fade-in transition-all duration-200",
                 `border-t-4 ${config.borderColor}`,
                 isOver && "ring-2 ring-primary/50 scale-[1.02]"
             )}
         >
-            <div className="p-4">
+            <div className="flex h-full flex-col p-4">
                 <h3 className={cn("text-xl font-bold mb-4 text-center", config.titleColor)}>
                     {config.title}
                 </h3>
                 <div
                     ref={setNodeRef}
                     className={cn(
-                        "space-y-3 min-h-[100px] rounded-lg p-2 transition-colors",
+                        "min-h-0 flex-1 space-y-3 overflow-y-auto rounded-lg p-2 transition-colors",
                         isOver && "bg-primary/10"
                     )}
                 >
@@ -67,6 +68,7 @@ export function DroppableColorGroup({ color, members }: DroppableColorGroupProps
                                 id={member.id}
                                 name={member.name}
                                 avatars={member.avatars}
+                                roomType={member.roomType}
                             />
                         ))}
                     </SortableContext>

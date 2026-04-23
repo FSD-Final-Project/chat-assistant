@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
     DndContext,
     DragEndEvent,
@@ -11,10 +11,12 @@ import {
 } from "@dnd-kit/core";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { DroppableColorGroup, GroupMember } from "@/components/preferences/DroppableColorGroup";
+import { RoomTypeIcon } from "@/components/preferences/DraggableMembers";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { TimePicker } from "@/components/ui/time-picker";
 import { DatePicker } from "@/components/ui/date-picker";
+import { toast } from "@/hooks/use-toast";
 
 type ColorType = "red" | "yellow" | "green";
 
@@ -25,62 +27,50 @@ interface ColorGroups {
 }
 
 const initialGroups: ColorGroups = {
-    red: [
-        {
-            id: "bosses",
-            name: "The Bosses",
-            avatars: [
-                "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop",
-                "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop",
-            ],
-        },
-    ],
-    yellow: [
-        {
-            id: "family",
-            name: "Family",
-            avatars: [
-                "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=100&h=100&fit=crop",
-                "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop",
-            ],
-        },
-        {
-            id: "girlfriend",
-            name: "Girl Friend",
-            avatars: [
-                "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=100&h=100&fit=crop",
-            ],
-        },
-        {
-            id: "bffs",
-            name: "BFF's",
-            avatars: [
-                "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=100&h=100&fit=crop",
-                "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=100&h=100&fit=crop",
-            ],
-        },
-    ],
-    green: [
-        {
-            id: "shalev",
-            name: "Shalev Atlas",
-            avatars: [
-                "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=100&h=100&fit=crop",
-            ],
-        },
-        {
-            id: "bar",
-            name: "Bar Levi",
-            avatars: [
-                "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=100&h=100&fit=crop",
-            ],
-        },
-    ],
+    red: [],
+    yellow: [],
+    green: [],
 };
+
+interface RocketSubscriptionResponseItem {
+    id: string;
+    roomId: string;
+    roomType?: string;
+    preferenceColor?: ColorType;
+    avatarUrl?: string;
+    payload?: {
+        fname?: string;
+        name?: string;
+        u?: { username?: string; name?: string };
+        [key: string]: unknown;
+    };
+}
+
+function mapSubscriptionToMember(subscription: RocketSubscriptionResponseItem): GroupMember {
+    const name =
+        subscription.payload?.fname ??
+        subscription.payload?.u?.name ??
+        subscription.payload?.name ??
+        subscription.payload?.u?.username ??
+        subscription.roomId;
+
+    return {
+        id: subscription.id,
+        name,
+        avatars: subscription.avatarUrl ? [subscription.avatarUrl] : [],
+        roomType: subscription.roomType,
+    };
+}
+
+function isColorType(value: string | undefined): value is ColorType {
+    return value === "red" || value === "yellow" || value === "green";
+}
 
 export default function Preferences() {
     const [groups, setGroups] = useState<ColorGroups>(initialGroups);
     const [activeId, setActiveId] = useState<string | null>(null);
+    const [activeOriginColor, setActiveOriginColor] = useState<ColorType | null>(null);
+    const [isLoadingSubscriptions, setIsLoadingSubscriptions] = useState(true);
 
     // Time pickers state
     const [startTime, setStartTime] = useState("15:00");
@@ -96,6 +86,56 @@ export default function Preferences() {
             },
         })
     );
+
+    useEffect(() => {
+        let isMounted = true;
+
+        const loadSubscriptions = async () => {
+            try {
+                const response = await fetch("/users/me/rocket-subscriptions", {
+                    credentials: "include",
+                });
+
+                const payload = await response.json();
+                if (!response.ok) {
+                    throw new Error(payload.message ?? "Failed to load Rocket subscriptions");
+                }
+
+                if (!isMounted) return;
+
+                const nextGroups: ColorGroups = { red: [], yellow: [], green: [] };
+                for (const subscription of payload.subscriptions as RocketSubscriptionResponseItem[]) {
+                    const member = mapSubscriptionToMember(subscription);
+                    const color = isColorType(subscription.preferenceColor)
+                        ? subscription.preferenceColor
+                        : "yellow";
+                    nextGroups[color].push(member);
+                }
+
+                setGroups(nextGroups);
+            } catch (error) {
+                if (!isMounted) return;
+
+                const description =
+                    error instanceof Error ? error.message : "Failed to load Rocket subscriptions";
+                toast({
+                    title: "Failed to load subscriptions",
+                    description,
+                    variant: "destructive",
+                });
+            } finally {
+                if (isMounted) {
+                    setIsLoadingSubscriptions(false);
+                }
+            }
+        };
+
+        void loadSubscriptions();
+
+        return () => {
+            isMounted = false;
+        };
+    }, []);
 
     const findContainer = (id: string): ColorType | null => {
         if (id in groups) return id as ColorType;
@@ -118,7 +158,9 @@ export default function Preferences() {
     };
 
     const handleDragStart = (event: DragStartEvent) => {
-        setActiveId(event.active.id as string);
+        const memberId = event.active.id as string;
+        setActiveId(memberId);
+        setActiveOriginColor(findContainer(memberId));
     };
 
     const handleDragOver = (event: DragOverEvent) => {
@@ -147,13 +189,82 @@ export default function Preferences() {
     };
 
     const handleDragEnd = (event: DragEndEvent) => {
+        const { active, over } = event;
         setActiveId(null);
+        const previousColor = activeOriginColor;
+        setActiveOriginColor(null);
+
+        if (!over) return;
+
+        const activeId = active.id as string;
+        const overContainer = findContainer(over.id as string);
+
+        if (!previousColor || !overContainer || previousColor === overContainer) {
+            return;
+        }
+
+        void persistPreferenceColorChange(activeId, overContainer, previousColor);
+    };
+
+    const persistPreferenceColorChange = async (
+        subscriptionId: string,
+        nextColor: ColorType,
+        previousColor: ColorType
+    ) => {
+        try {
+            const response = await fetch(
+                `/users/me/rocket-subscriptions/${encodeURIComponent(subscriptionId)}/preference-color`,
+                {
+                    method: "POST",
+                    credentials: "include",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ preferenceColor: nextColor }),
+                }
+            );
+
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.message ?? "Failed to save subscription preference");
+            }
+        } catch (error) {
+            setGroups((prev) => {
+                const nextGroups: ColorGroups = {
+                    red: [...prev.red],
+                    yellow: [...prev.yellow],
+                    green: [...prev.green],
+                };
+                const currentIndex = nextGroups[nextColor].findIndex((member) => member.id === subscriptionId);
+                if (currentIndex === -1) {
+                    return prev;
+                }
+
+                const [member] = nextGroups[nextColor].splice(currentIndex, 1);
+                nextGroups[previousColor] = [...nextGroups[previousColor], member];
+                return nextGroups;
+            });
+
+            toast({
+                title: "Failed to save subscription preference",
+                description:
+                    error instanceof Error ? error.message : "Failed to save subscription preference",
+                variant: "destructive",
+            });
+        }
     };
 
     const activeMember = getActiveMember();
 
     return (
-        <DashboardLayout title="Preferences" subtitle="16 Chats Found">
+        <DashboardLayout
+            title="Preferences"
+            subtitle={
+                isLoadingSubscriptions
+                    ? "Loading subscriptions..."
+                    : `${groups.yellow.length} subscription${groups.yellow.length === 1 ? "" : "s"} found`
+            }
+        >
             <DndContext
                 sensors={sensors}
                 onDragStart={handleDragStart}
@@ -177,6 +288,9 @@ export default function Preferences() {
                                         <AvatarFallback>{activeMember.name[0]}</AvatarFallback>
                                     </Avatar>
                                 ))}
+                            </div>
+                            <div className="-ml-1 shrink-0 rounded-full bg-card-light/90 px-1.5 py-1">
+                                <RoomTypeIcon roomType={activeMember.roomType} />
                             </div>
                             <span className="text-sm text-card-light-foreground">{activeMember.name}</span>
                         </div>

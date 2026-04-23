@@ -7,7 +7,8 @@ import { ReplyService } from "./replyService.js";
 
 export class BotRunner {
   private readonly state = new BotState();
-  private readonly initializedRoomIds = new Set<string>();
+  private readonly startedAt = new Date();
+  private readonly roomWatermarks = new Map<string, Date>();
 
   constructor(
     private readonly config: BotConfig,
@@ -23,7 +24,9 @@ export class BotRunner {
 
   private initializeAuth(): void {
     this.state.userId = this.rocketChatClient.currentUserId;
-    console.log(`Using Rocket.Chat token auth (userId=${this.state.userId})`);
+    console.log(
+      `Using Rocket.Chat token auth for '${this.rocketChatClient.identityLabel}' (userId=${this.state.userId})`
+    );
   }
 
   private async runLoop(): Promise<void> {
@@ -43,26 +46,15 @@ export class BotRunner {
   }
 
   private async processRoom(roomId: string): Promise<void> {
-    const messages = await this.rocketChatClient.getDirectMessages(roomId, 20);
-
-    if (!this.initializedRoomIds.has(roomId)) {
-      for (const message of messages) {
-        if (message._id) {
-          this.state.markProcessed(message._id);
-        }
-      }
-
-      this.initializedRoomIds.add(roomId);
-      if (messages.length > 0) {
-        console.log(`[${roomId}] Skipped ${messages.length} existing message(s) on first sync`);
-      }
-      return;
-    }
-
-    messages.reverse();
+    const oldest = this.roomWatermarks.get(roomId) ?? this.startedAt;
+    const messages = await this.rocketChatClient.getDirectMessages(roomId, oldest);
 
     for (const message of messages) {
       await this.processMessage(roomId, message);
+      const timestamp = this.getMessageDate(message);
+      if (timestamp) {
+        this.roomWatermarks.set(roomId, timestamp);
+      }
     }
   }
 
@@ -108,5 +100,22 @@ export class BotRunner {
     }
 
     return true;
+  }
+
+  private getMessageDate(message: RocketChatMessage): Date | null {
+    if (!message.ts) {
+      return null;
+    }
+
+    if (typeof message.ts === "string") {
+      const parsed = new Date(message.ts);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
+    if (typeof message.ts.$date === "number") {
+      return new Date(message.ts.$date);
+    }
+
+    return null;
   }
 }

@@ -7,6 +7,7 @@ export interface RocketChatMessage {
   _id: string;
   msg?: string;
   u?: RocketChatUserRef;
+  ts?: string | { $date?: number };
 }
 
 export interface RocketChatDirectRoom {

@@ -5,4 +5,5 @@ export interface SessionUser {
   givenName?: string;
   familyName?: string;
   picture?: string;
+  hasRocketIntegration?: boolean;
 }

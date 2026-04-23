@@ -7,6 +7,7 @@ export interface AuthUser {
   givenName?: string;
   familyName?: string;
   picture?: string;
+  hasRocketIntegration?: boolean;
 }
 
 interface AuthContextValue {
@@ -16,6 +17,7 @@ interface AuthContextValue {
   refreshSession: () => Promise<void>;
   signInWithGoogle: () => void;
   signOut: () => Promise<void>;
+  updateUser: (user: AuthUser | null) => void;
 }
 
 interface SessionResponse {
@@ -72,6 +74,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const updateUser = useCallback((nextUser: AuthUser | null) => {
+    setUser(nextUser);
+  }, []);
+
   return (
     <AuthContext.Provider
       value={{
@@ -81,6 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         refreshSession,
         signInWithGoogle,
         signOut,
+        updateUser,
       }}
     >
       {children}
