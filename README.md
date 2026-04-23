@@ -4,12 +4,14 @@ Chat Assistant is a full-stack workspace with:
 
 - a Vite + React dashboard client
 - a NestJS + Express authentication server for Google SSO
+- a NestJS worker that syncs Rocket.Chat subscriptions and messages through the main server
 - a Rocket.Chat OpenAI bot that replies in direct messages
 
 ## Projects
 
 - `client/`: frontend client
 - `server/`: NestJS backend for Google OAuth and session auth
+- `user-data-worker/`: NestJS worker for Rocket.Chat data syncing
 - `rocket-chat-openai-bot/`: Rocket.Chat bot service
 - `rocketchat-compose/`: local Rocket.Chat docker setup
 
@@ -35,9 +37,11 @@ Available scripts:
 - `npm run dev:client` - run the Vite client
 - `npm run dev:server` - run the Nest auth server
 - `npm run dev:bot` - run the Rocket.Chat bot
-- `npm run dev:all` - run client, server, and bot together
+- `npm run dev:worker` - run the Rocket.Chat data worker
+- `npm run dev:all` - run client, server, worker, and bot together
 - `npm run build` - build the Vite client
 - `npm run build:server` - build the Nest server
+- `npm run build:worker` - build the Nest worker
 - `npm run rocket` - start the local Rocket.Chat stack from `rocketchat-compose`
 
 `npm run dev:all` uses `concurrently`, so make sure root dependencies are installed first.
@@ -65,6 +69,8 @@ It runs on `http://localhost:3001` by default, stores users in MongoDB, encrypts
 - `GET /auth/session`
 - `POST /auth/logout`
 - `POST /users/me/rocket-integration`
+- `POST /users/internal/rocket-sync/subscriptions`
+- `POST /users/internal/rocket-sync/messages`
 
 Setup:
 
@@ -95,11 +101,41 @@ Google OAuth configuration:
 - Authorized redirect URI: `http://localhost:3001/auth/google/callback`
 
 After Google login, the client sends the user to `Rocket Integration`, where they must provide their Rocket.Chat `user token` and `user id`. Those values are encrypted and stored on the user document in MongoDB.
+The main server no longer pulls Rocket.Chat history itself; the worker service does that over internal HTTPS requests.
 
 Run only the server:
 
 ```sh
 npm run dev:server
+```
+
+## User Data Worker
+
+The worker lives in `user-data-worker/`. It polls Rocket.Chat using the integrated users returned by the main server, then persists subscriptions and messages back through internal main-server endpoints.
+
+Setup:
+
+```sh
+cd user-data-worker
+npm install
+cp .env.example .env
+```
+
+Required values in `user-data-worker/.env`:
+
+```sh
+MAIN_SERVER_URL=http://localhost:3001
+INTERNAL_API_KEY=replace-this-with-the-same-internal-key-used-by-server
+RC_URL=https://open.rocket.chat
+POLL_INTERVAL_MS=30000
+RC_REQUEST_INTERVAL_MS=500
+RC_RETRY_BACKOFF_MS=5000
+```
+
+Run only the worker:
+
+```sh
+npm run dev:worker
 ```
 
 ## Rocket.Chat Bot
@@ -142,6 +178,7 @@ Or run services separately:
 
 ```sh
 npm run dev:server
+npm run dev:worker
 npm run dev:client
 npm run dev:bot
 ```
@@ -154,6 +191,7 @@ npm run dev:bot
 - NestJS
 - Express
 - Google OAuth
+- MongoDB
 - Rocket.Chat
 - OpenAI API
 - Tailwind CSS
