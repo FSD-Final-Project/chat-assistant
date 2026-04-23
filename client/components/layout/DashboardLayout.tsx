@@ -1,5 +1,4 @@
 import { ReactNode } from "react";
-import { Sidebar } from "./Sidebar";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
@@ -7,9 +6,15 @@ interface DashboardLayoutProps {
     children: ReactNode;
     title: string;
     subtitle?: string;
+    showHeaderControls?: boolean;
 }
 
-export function DashboardLayout({ children, title, subtitle }: DashboardLayoutProps) {
+export function DashboardLayout({
+    children,
+    title,
+    subtitle,
+    showHeaderControls = true,
+}: DashboardLayoutProps) {
     return (
         <div className="bg-background">
             <main className="p-8">
@@ -24,18 +29,20 @@ export function DashboardLayout({ children, title, subtitle }: DashboardLayoutPr
                         )}
                     </div>
 
-                    <div className="flex items-center gap-4">
-                        <div className="relative">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                placeholder="Search..."
-                                className="w-64 pl-10 bg-card border-border"
-                            />
+                    {showHeaderControls ? (
+                        <div className="flex items-center gap-4">
+                            <div className="relative">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    placeholder="Search..."
+                                    className="w-64 pl-10 bg-card border-border"
+                                />
+                            </div>
+                            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-primary via-purple-500 to-pink-500 flex items-center justify-center">
+                                <span className="text-xs font-bold text-white">־±X</span>
+                            </div>
                         </div>
-                        <div className="h-10 w-10 rounded-full bg-gradient-to-br from-primary via-purple-500 to-pink-500 flex items-center justify-center">
-                            <span className="text-xs font-bold text-white">αX</span>
-                        </div>
-                    </div>
+                    ) : null}
                 </header>
 
                 {children}

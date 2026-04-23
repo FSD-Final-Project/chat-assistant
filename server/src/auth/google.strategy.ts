@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { PassportStrategy } from "@nestjs/passport";
 import { Strategy, VerifyCallback } from "passport-google-oauth20";
 import type { SessionUser } from "./session-user";
+import { UsersService } from "../users/users.service";
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -14,7 +15,7 @@ function getRequiredEnv(name: string): string {
 
 @Injectable()
 export class GoogleStrategy extends PassportStrategy(Strategy, "google") {
-  constructor() {
+  constructor(private readonly usersService: UsersService) {
     super({
       clientID: getRequiredEnv("GOOGLE_CLIENT_ID"),
       clientSecret: getRequiredEnv("GOOGLE_CLIENT_SECRET"),
@@ -23,7 +24,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, "google") {
     });
   }
 
-  validate(
+  async validate(
     accessToken: string,
     refreshToken: string,
     profile: {
@@ -38,13 +39,23 @@ export class GoogleStrategy extends PassportStrategy(Strategy, "google") {
     void accessToken;
     void refreshToken;
 
-    const user: SessionUser = {
+    const appUser = await this.usersService.upsertGoogleUser({
       id: profile.id,
       email: profile.emails?.[0]?.value ?? "",
       name: profile.displayName ?? "Google User",
       givenName: profile.name?.givenName,
       familyName: profile.name?.familyName,
       picture: profile.photos?.[0]?.value,
+    });
+
+    const user: SessionUser = {
+      id: appUser.googleId,
+      email: appUser.email,
+      name: appUser.name,
+      givenName: appUser.givenName,
+      familyName: appUser.familyName,
+      picture: appUser.picture,
+      hasRocketIntegration: this.usersService.hasRocketIntegration(appUser),
     };
 
     done(null, user);

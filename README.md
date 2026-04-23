@@ -58,12 +58,13 @@ npm run dev:client
 ## Auth Server
 
 The backend is a NestJS app using Express sessions and Google OAuth.
-It runs on `http://localhost:3001` by default and exposes:
+It runs on `http://localhost:3001` by default, stores users in MongoDB, encrypts Rocket.Chat credentials before saving them, and exposes:
 
 - `GET /auth/google`
 - `GET /auth/google/callback`
 - `GET /auth/session`
 - `POST /auth/logout`
+- `POST /users/me/rocket-integration`
 
 Setup:
 
@@ -78,7 +79,9 @@ Required values in `server/.env`:
 ```sh
 PORT=3001
 CLIENT_URL=http://localhost:8080
+MONGODB_URI=mongodb://127.0.0.1:27017/chat-assistant
 SESSION_SECRET=replace-this-session-secret
+ROCKET_CREDENTIALS_ENCRYPTION_KEY=replace-this-with-a-long-random-secret
 GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_CALLBACK_URL=http://localhost:3001/auth/google/callback
@@ -90,6 +93,8 @@ Google OAuth configuration:
 
 - Authorized JavaScript origin: `http://localhost:3001`
 - Authorized redirect URI: `http://localhost:3001/auth/google/callback`
+
+After Google login, the client sends the user to `Rocket Integration`, where they must provide their Rocket.Chat `user token` and `user id`. Those values are encrypted and stored on the user document in MongoDB.
 
 Run only the server:
 
