@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post, Query, Req, Res } from "@nestjs/common";
 import type { Request, Response } from "express";
 import type { SessionUser } from "../auth/session-user";
+import { BotNotificationService } from "./bot-notification.service";
 import { RocketSyncService } from "./rocket-sync.service";
 import { UsersService } from "./users.service";
 import type { RocketPreferenceColor } from "./schemas/rocket-subscription.schema";
@@ -36,8 +37,31 @@ interface RocketSubscriptionPayload {
   u?: RocketSubscriptionPayloadUser;
 }
 
+interface InternalBotSubscriptionsQuery {
+  googleId?: string;
+}
+
 interface UpdateRocketSubscriptionPreferenceColorBody {
   preferenceColor?: RocketPreferenceColor;
+}
+
+interface InternalBotNotificationBody {
+  googleId?: string;
+  email?: string;
+  roomId?: string;
+  messageId?: string;
+  subscriptionId?: string;
+  roomType?: string;
+  preferenceColor?: RocketPreferenceColor;
+  kind?: "approval" | "info";
+  senderName?: string;
+  senderUsername?: string;
+  incomingText?: string;
+  suggestedReply?: string;
+}
+
+interface ApproveBotNotificationBody {
+  replyText?: string;
 }
 
 @Controller("users")
@@ -45,6 +69,7 @@ export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly rocketSyncService: RocketSyncService,
+    private readonly botNotificationService: BotNotificationService,
   ) {}
 
   private isInternalRequestAuthorized(request: Request): boolean {
@@ -94,6 +119,32 @@ export class UsersController {
     }
 
     return `${baseUrl}/avatar/${encodeURIComponent(`@${roomName}`)}`;
+  }
+
+  private mapBotNotification(notification: {
+    _id: unknown;
+    roomId: string;
+    roomType?: string;
+    preferenceColor: RocketPreferenceColor;
+    kind: "approval" | "info";
+    senderName?: string;
+    senderUsername?: string;
+    incomingText: string;
+    suggestedReply?: string;
+    createdAt?: Date;
+  }) {
+    return {
+      id: String(notification._id),
+      roomId: notification.roomId,
+      roomType: notification.roomType,
+      preferenceColor: notification.preferenceColor,
+      kind: notification.kind,
+      senderName: notification.senderName,
+      senderUsername: notification.senderUsername,
+      incomingText: notification.incomingText,
+      suggestedReply: notification.suggestedReply,
+      createdAt: notification.createdAt,
+    };
   }
 
   @Get("internal/rocket-auth/all")
@@ -164,6 +215,39 @@ export class UsersController {
     response.status(200).json(rocketAuth);
   }
 
+  @Get("internal/bot-subscriptions")
+  async getInternalBotSubscriptions(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Query() query: InternalBotSubscriptionsQuery,
+  ) {
+    try {
+      if (!this.isInternalRequestAuthorized(request)) {
+        response.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+    } catch (error) {
+      response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
+      return;
+    }
+
+    const googleId = query.googleId?.trim();
+    if (!googleId) {
+      response.status(400).json({ message: "googleId is required" });
+      return;
+    }
+
+    const subscriptions = await this.rocketSyncService.listSubscriptions(googleId);
+    response.status(200).json({
+      subscriptions: subscriptions.map((subscription) => ({
+        id: subscription.subscriptionId,
+        roomId: subscription.roomId,
+        roomType: subscription.roomType,
+        preferenceColor: subscription.preferenceColor,
+      })),
+    });
+  }
+
   @Post("internal/rocket-sync/subscriptions")
   async syncSubscriptions(
     @Req() request: Request,
@@ -222,6 +306,69 @@ export class UsersController {
 
     await this.rocketSyncService.upsertMessages(googleId, email, roomId, roomType, messages);
     response.status(200).json({ success: true, count: messages.length });
+  }
+
+  @Post("internal/bot-notifications")
+  async createInternalBotNotification(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: InternalBotNotificationBody,
+  ) {
+    try {
+      if (!this.isInternalRequestAuthorized(request)) {
+        response.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+    } catch (error) {
+      response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
+      return;
+    }
+
+    const googleId = body.googleId?.trim();
+    const email = body.email?.trim().toLowerCase();
+    const roomId = body.roomId?.trim();
+    const messageId = body.messageId?.trim();
+    const incomingText = body.incomingText?.trim();
+    const kind = body.kind;
+    const preferenceColor = body.preferenceColor;
+
+    if (!googleId || !email || !roomId || !messageId || !incomingText || !kind || !preferenceColor) {
+      response.status(400).json({
+        message:
+          "googleId, email, roomId, messageId, incomingText, kind, and preferenceColor are required",
+      });
+      return;
+    }
+
+    if (!["approval", "info"].includes(kind)) {
+      response.status(400).json({ message: "kind must be approval or info" });
+      return;
+    }
+
+    if (!["red", "yellow", "green"].includes(preferenceColor)) {
+      response.status(400).json({ message: "preferenceColor must be red, yellow, or green" });
+      return;
+    }
+
+    const notification = await this.botNotificationService.createOrUpdatePending({
+      appUserGoogleId: googleId,
+      appUserEmail: email,
+      roomId,
+      messageId,
+      subscriptionId: body.subscriptionId?.trim(),
+      roomType: body.roomType?.trim(),
+      preferenceColor,
+      kind,
+      senderName: body.senderName?.trim(),
+      senderUsername: body.senderUsername?.trim(),
+      incomingText,
+      suggestedReply: body.suggestedReply?.trim(),
+    });
+
+    response.status(200).json({
+      success: true,
+      notificationId: notification._id,
+    });
   }
 
   @Post("me/rocket-integration")
@@ -335,6 +482,127 @@ export class UsersController {
         preferenceColor: subscription.preferenceColor,
       },
     });
+  }
+
+  @Get("me/bot-notifications")
+  async getMyBotNotifications(@Req() request: Request, @Res() response: Response) {
+    const sessionUser = request.user as SessionUser | undefined;
+    if (!request.isAuthenticated() || !sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const notifications = await this.botNotificationService.listPending(sessionUser.id);
+    response.status(200).json({
+      notifications: notifications.map((notification) => this.mapBotNotification(notification)),
+    });
+  }
+
+  @Get("me/bot-notifications/stream")
+  async streamMyBotNotifications(@Req() request: Request, @Res() response: Response) {
+    const sessionUser = request.user as SessionUser | undefined;
+    if (!request.isAuthenticated() || !sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    response.setHeader("Content-Type", "text/event-stream");
+    response.setHeader("Cache-Control", "no-cache, no-transform");
+    response.setHeader("Connection", "keep-alive");
+    response.setHeader("X-Accel-Buffering", "no");
+    response.flushHeaders?.();
+
+    const writeSnapshot = async () => {
+      const notifications = await this.botNotificationService.listPending(sessionUser.id);
+      response.write(
+        `event: notifications\ndata: ${JSON.stringify({
+          notifications: notifications.map((notification) => this.mapBotNotification(notification)),
+        })}\n\n`,
+      );
+    };
+
+    await writeSnapshot();
+
+    const unsubscribe = this.botNotificationService.subscribe(sessionUser.id, () => {
+      void writeSnapshot();
+    });
+
+    const heartbeat = setInterval(() => {
+      response.write(": keep-alive\n\n");
+    }, 15000);
+
+    request.on("close", () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+      response.end();
+    });
+  }
+
+  @Post("me/bot-notifications/:notificationId/approve")
+  async approveMyBotNotification(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: ApproveBotNotificationBody,
+  ) {
+    const sessionUser = request.user as SessionUser | undefined;
+    if (!request.isAuthenticated() || !sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const rawNotificationId = request.params.notificationId;
+    const notificationId =
+      typeof rawNotificationId === "string" ? rawNotificationId.trim() : undefined;
+    const replyText = body.replyText?.trim();
+
+    if (!notificationId || !replyText) {
+      response.status(400).json({ message: "notificationId and replyText are required" });
+      return;
+    }
+
+    try {
+      const notification = await this.botNotificationService.approveAndSend(
+        sessionUser.id,
+        notificationId,
+        replyText,
+      );
+
+      if (!notification) {
+        response.status(404).json({ message: "Notification not found" });
+        return;
+      }
+
+      response.status(200).json({ success: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to approve notification";
+      response.status(500).json({ message });
+    }
+  }
+
+  @Post("me/bot-notifications/:notificationId/dismiss")
+  async dismissMyBotNotification(@Req() request: Request, @Res() response: Response) {
+    const sessionUser = request.user as SessionUser | undefined;
+    if (!request.isAuthenticated() || !sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const rawNotificationId = request.params.notificationId;
+    const notificationId =
+      typeof rawNotificationId === "string" ? rawNotificationId.trim() : undefined;
+
+    if (!notificationId) {
+      response.status(400).json({ message: "notificationId is required" });
+      return;
+    }
+
+    const notification = await this.botNotificationService.dismiss(sessionUser.id, notificationId);
+    if (!notification) {
+      response.status(404).json({ message: "Notification not found" });
+      return;
+    }
+
+    response.status(200).json({ success: true });
   }
 
   @Get("me/rocket-subscriptions/:subscriptionId/avatar")

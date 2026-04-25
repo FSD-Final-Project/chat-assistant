@@ -21,3 +21,19 @@ export interface RocketChatImListResponse {
 export interface RocketChatMessagesResponse {
   messages?: RocketChatMessage[];
 }
+
+export interface RocketChatChannel {
+  _id: string;
+}
+
+export interface RocketChatChannelListResponse {
+  channels?: RocketChatChannel[];
+}
+
+export interface RocketChatGroup {
+  _id: string;
+}
+
+export interface RocketChatGroupListResponse {
+  groups?: RocketChatGroup[];
+}
