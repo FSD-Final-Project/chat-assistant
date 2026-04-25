@@ -41,16 +41,16 @@ export default function ActiveChats() {
     return (
         <DashboardLayout title="Top - Active Chat's" subtitle="4 Chats Found">
             {/* Date Range */}
-            <div className="flex items-center gap-3 mb-8 light-card rounded-full px-4 py-2 w-fit">
+            <div className="mb-8 flex w-fit flex-wrap items-center gap-3 rounded-full light-card px-4 py-2">
                 <DatePicker value={startDate} onChange={(date) => date && setStartDate(date)} />
                 <span className="text-card-light-foreground/60">To</span>
                 <DatePicker value={endDate} onChange={(date) => date && setEndDate(date)} />
             </div>
 
             {/* Cards with staggered layout */}
-            <div className="relative flex items-end justify-center gap-4 mt-12 pb-8">
+            <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 xl:items-end xl:gap-5 xl:pb-8">
                 {activeChats.map((chat, index) => {
-                    const heights = [0, 60, 120, 180];
+                    const heights = [0, 28, 56, 84];
                     return (
                         <ActiveChatCard
                             key={chat.id}
@@ -58,9 +58,9 @@ export default function ActiveChats() {
                             avatar={chat.avatar}
                             messageCount={chat.messageCount}
                             description={chat.description}
-                            className="w-64"
+                            className="w-full xl:max-w-[220px]"
                             style={{
-                                marginBottom: `${heights[index]}px`,
+                                marginBottom: index > 0 ? `${heights[index]}px` : undefined,
                                 animationDelay: `${index * 100}ms`,
                             }}
                         />

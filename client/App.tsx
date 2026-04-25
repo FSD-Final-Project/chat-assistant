@@ -49,9 +49,9 @@ const AppContent = () => {
     const showSidebar = isAuthenticated && !["/login", "/rocket-integration"].includes(location.pathname);
 
     return (
-        <div className="min-h-screen bg-background flex">
+        <div className="min-h-screen bg-background lg:flex">
             {showSidebar && <Sidebar />}
-            <div className="p-8 w-full">
+            <div className="min-w-0 flex-1">
                 <Routes>
                     <Route path="/" element={<ProtectedRoute><TodaySummary /></ProtectedRoute>} />
                     <Route path="/active-chats" element={<ProtectedRoute><ActiveChats /></ProtectedRoute>} />

@@ -272,7 +272,7 @@ export default function Preferences() {
                 onDragEnd={handleDragEnd}
             >
                 {/* Color Group Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div className="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-3 xl:gap-6">
                     <DroppableColorGroup color="red" members={groups.red} />
                     <DroppableColorGroup color="yellow" members={groups.yellow} />
                     <DroppableColorGroup color="green" members={groups.green} />
@@ -298,32 +298,32 @@ export default function Preferences() {
                 </DragOverlay>
             </DndContext>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 xl:gap-6">
                 {/* Bot Activate Time */}
-                <div className="light-card rounded-2xl p-6 animate-fade-in">
+                <div className="light-card animate-fade-in rounded-2xl p-4 sm:p-6">
                     <h3 className="text-lg font-bold text-card-light-foreground mb-6 text-center">
                         Bot Activate Time
                     </h3>
 
                     <div className="space-y-4">
                         {/* Time Range */}
-                        <div className="flex items-center justify-center gap-3 bg-card-light/50 rounded-full px-4 py-2">
+                        <div className="flex flex-col items-stretch justify-center gap-3 rounded-3xl bg-card-light/50 px-4 py-3 sm:flex-row sm:items-center sm:rounded-full sm:py-2">
                             <TimePicker value={startTime} onChange={setStartTime} />
-                            <span className="text-card-light-foreground/60">To</span>
+                            <span className="text-center text-card-light-foreground/60">To</span>
                             <TimePicker value={endTime} onChange={setEndTime} />
                         </div>
 
                         {/* Date Range */}
-                        <div className="flex items-center justify-center gap-3 bg-primary/10 rounded-full px-4 py-2">
+                        <div className="flex flex-col items-stretch justify-center gap-3 rounded-3xl bg-primary/10 px-4 py-3 sm:flex-row sm:items-center sm:rounded-full sm:py-2">
                             <DatePicker value={startDate} onChange={setStartDate} />
-                            <span className="text-card-light-foreground/60">To</span>
+                            <span className="text-center text-card-light-foreground/60">To</span>
                             <DatePicker value={endDate} onChange={setEndDate} />
                         </div>
                     </div>
                 </div>
 
                 {/* Bot Preferences */}
-                <div className="light-card rounded-2xl p-6 animate-fade-in" style={{ animationDelay: "100ms" }}>
+                <div className="light-card animate-fade-in rounded-2xl p-4 sm:p-6" style={{ animationDelay: "100ms" }}>
                     <h3 className="text-lg font-bold text-card-light-foreground mb-6 text-center">
                         Bot preferences
                     </h3>

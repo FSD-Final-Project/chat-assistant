@@ -81,7 +81,7 @@ export default function TodaySummary() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Chart Section */}
                 <div className="lg:col-span-2 glass-card rounded-2xl p-6 animate-fade-in">
-                    <ResponsiveContainer width="100%" height={300}>
+                    <ResponsiveContainer width="100%" height={270}>
                         <LineChart data={chartData}>
                             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                             <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" />

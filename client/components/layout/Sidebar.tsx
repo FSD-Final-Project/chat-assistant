@@ -29,26 +29,28 @@ export function Sidebar() {
     };
 
     return (
-        <aside className="left-0 top-0 h-screen w-[18rem] bg-sidebar flex flex-col border-r border-sidebar-border">
-            {/* User Profile */}
-            <div className="p-6">
+        <aside className="sticky top-0 hidden h-screen w-[15.5rem] shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex xl:w-[17rem]">
+            <div className="p-5 xl:p-6">
                 <div className="flex items-center gap-3">
                     <Avatar className="h-12 w-12 border-2 border-primary/30">
                         <AvatarImage src={user?.picture} />
                         <AvatarFallback>{initials}</AvatarFallback>
                     </Avatar>
-                    <div className="flex-1">
+                    <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1">
-                            <span className="font-semibold text-sidebar-foreground">{user?.name ?? "Workspace User"}</span>
-                            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                            <span className="truncate font-semibold text-sidebar-foreground">
+                                {user?.name ?? "Workspace User"}
+                            </span>
+                            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
                         </div>
-                        <span className="text-sm text-muted-foreground">{user?.email ?? "No email available"}</span>
+                        <span className="block truncate text-sm text-muted-foreground">
+                            {user?.email ?? "No email available"}
+                        </span>
                     </div>
                 </div>
             </div>
 
-            {/* Navigation */}
-            <nav className="flex-1 px-4">
+            <nav className="flex-1 px-3 xl:px-4">
                 <ul className="space-y-2">
                     {navItems.map((item) => {
                         const isActive = location.pathname === item.path;
@@ -57,10 +59,10 @@ export function Sidebar() {
                                 <Link
                                     to={item.path}
                                     className={cn(
-                                        "flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200",
+                                        "flex items-center gap-3 rounded-lg px-3 py-3 text-sm transition-all duration-200 xl:px-4",
                                         isActive
-                                            ? "bg-sidebar-accent text-sidebar-foreground font-medium"
-                                            : "text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
+                                            ? "bg-sidebar-accent font-medium text-sidebar-foreground"
+                                            : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
                                     )}
                                 >
                                     <item.icon className="h-5 w-5" />
@@ -72,11 +74,10 @@ export function Sidebar() {
                 </ul>
             </nav>
 
-            {/* Logout */}
-            <div className="p-4 border-t border-sidebar-border">
+            <div className="border-t border-sidebar-border p-4">
                 <button
                     onClick={handleLogout}
-                    className="flex items-center gap-3 px-4 py-3 text-muted-foreground hover:text-sidebar-foreground transition-colors w-full"
+                    className="flex w-full items-center gap-3 px-3 py-3 text-sm text-muted-foreground transition-colors hover:text-sidebar-foreground xl:px-4"
                 >
                     <LogOut className="h-5 w-5" />
                     <span>Log Out</span>

@@ -154,7 +154,7 @@ export default function HistoryStatistics() {
                 {/* Multi-line Chart */}
                 <div className="glass-card rounded-2xl p-6 animate-fade-in">
                     <h3 className="text-lg font-semibold mb-4 text-foreground">Red vs. Yellow vs. Green</h3>
-                    <ResponsiveContainer width="100%" height={250}>
+                    <ResponsiveContainer width="100%" height={220}>
                         <LineChart data={lineData}>
                             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                             <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" />
@@ -177,7 +177,7 @@ export default function HistoryStatistics() {
                 {/* Time of Day Chart */}
                 <div className="glass-card rounded-2xl p-6 animate-fade-in" style={{ animationDelay: "100ms" }}>
                     <h3 className="text-lg font-semibold mb-4 text-foreground">most active time of the day</h3>
-                    <ResponsiveContainer width="100%" height={250}>
+                    <ResponsiveContainer width="100%" height={220}>
                         <LineChart data={timeData}>
                             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                             <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" />
