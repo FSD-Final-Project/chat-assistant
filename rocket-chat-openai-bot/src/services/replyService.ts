@@ -48,14 +48,21 @@ export class ReplyService {
     this.openai = new OpenAI({ apiKey: config.openAiApiKey });
   }
 
-  async generateReply(roomId: string, incomingText: string): Promise<string> {
+  async generateReply(
+    roomId: string,
+    incomingText: string,
+    options: { commitToContext?: boolean } = {}
+  ): Promise<string> {
+    const { commitToContext = true } = options;
     const userText = this.config.botTriggerPrefix
       ? incomingText.trim().slice(this.config.botTriggerPrefix.length).trim()
       : incomingText.trim();
 
     if (isTodoListMessage(userText)) {
-      this.contextStore.push(roomId, "user", userText);
-      this.contextStore.push(roomId, "assistant", "noted");
+      if (commitToContext) {
+        this.contextStore.push(roomId, "user", userText);
+        this.contextStore.push(roomId, "assistant", "noted");
+      }
       return "noted";
     }
 
@@ -95,8 +102,10 @@ export class ReplyService {
       throw new Error("OpenAI response did not contain text output");
     }
 
-    this.contextStore.push(roomId, "user", userText);
-    this.contextStore.push(roomId, "assistant", output);
+    if (commitToContext) {
+      this.contextStore.push(roomId, "user", userText);
+      this.contextStore.push(roomId, "assistant", output);
+    }
     return output;
   }
 }

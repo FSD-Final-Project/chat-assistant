@@ -1,9 +1,11 @@
-import type { BotConfig } from "../types/bot.js";
+import type { BotConfig, ManagedSubscription, RocketChatAuth } from "../types/bot.js";
 import type { RocketChatMessage } from "../types/rocketchat.js";
 import { RocketChatClient } from "../clients/rocketChatClient.js";
 import { BotState } from "../state/botState.js";
 import { sleep } from "../utils/sleep.js";
+import { BotNotificationStore } from "./botNotificationStore.js";
 import { ReplyService } from "./replyService.js";
+import { SubscriptionPreferenceStore } from "./subscriptionPreferenceStore.js";
 
 export class BotRunner {
   private readonly state = new BotState();
@@ -12,8 +14,11 @@ export class BotRunner {
 
   constructor(
     private readonly config: BotConfig,
+    private readonly auth: RocketChatAuth,
     private readonly rocketChatClient: RocketChatClient,
-    private readonly replyService: ReplyService
+    private readonly replyService: ReplyService,
+    private readonly subscriptionPreferenceStore: SubscriptionPreferenceStore,
+    private readonly botNotificationStore: BotNotificationStore
   ) {}
 
   async start(): Promise<void> {
@@ -32,9 +37,10 @@ export class BotRunner {
   private async runLoop(): Promise<void> {
     while (true) {
       try {
-        const rooms = await this.rocketChatClient.listDirectRooms();
-        for (const room of rooms) {
-          await this.processRoom(room._id);
+        const subscriptions =
+          await this.subscriptionPreferenceStore.loadManagedSubscriptions(this.auth);
+        for (const subscription of subscriptions) {
+          await this.processSubscription(subscription);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -45,20 +51,27 @@ export class BotRunner {
     }
   }
 
-  private async processRoom(roomId: string): Promise<void> {
-    const oldest = this.roomWatermarks.get(roomId) ?? this.startedAt;
-    const messages = await this.rocketChatClient.getDirectMessages(roomId, oldest);
+  private async processSubscription(subscription: ManagedSubscription): Promise<void> {
+    const oldest = this.roomWatermarks.get(subscription.roomId) ?? this.startedAt;
+    const messages = await this.rocketChatClient.getRoomMessages(
+      subscription.roomId,
+      subscription.roomType,
+      oldest
+    );
 
     for (const message of messages) {
-      await this.processMessage(roomId, message);
+      await this.processMessage(subscription, message);
       const timestamp = this.getMessageDate(message);
       if (timestamp) {
-        this.roomWatermarks.set(roomId, timestamp);
+        this.roomWatermarks.set(subscription.roomId, timestamp);
       }
     }
   }
 
-  private async processMessage(roomId: string, message: RocketChatMessage): Promise<void> {
+  private async processMessage(
+    subscription: ManagedSubscription,
+    message: RocketChatMessage
+  ): Promise<void> {
     if (!message._id) {
       return;
     }
@@ -70,17 +83,57 @@ export class BotRunner {
 
     try {
       const userText = (message.msg ?? "").trim();
-      console.log(`[${roomId}] User: ${userText}`);
-      const reply = await this.replyService.generateReply(roomId, userText);
-      await this.rocketChatClient.postMessage(roomId, reply);
-      console.log(`[${roomId}] Bot: ${reply}`);
+      const senderName = message.u?.username ?? message.u?._id ?? subscription.roomId;
+      console.log(
+        `[${subscription.roomId}] ${subscription.preferenceColor.toUpperCase()} User: ${userText}`
+      );
+
+      if (subscription.preferenceColor === "green") {
+        const reply = await this.replyService.generateReply(subscription.roomId, userText);
+        await this.rocketChatClient.postMessage(subscription.roomId, reply);
+        console.log(`[${subscription.roomId}] Bot: ${reply}`);
+      } else if (subscription.preferenceColor === "yellow") {
+        const suggestedReply = await this.replyService.generateReply(
+          subscription.roomId,
+          userText,
+          { commitToContext: false }
+        );
+        await this.botNotificationStore.createNotification({
+          auth: this.auth,
+          roomId: subscription.roomId,
+          roomType: subscription.roomType,
+          subscriptionId: subscription.id,
+          messageId: message._id,
+          preferenceColor: subscription.preferenceColor,
+          kind: "approval",
+          senderName,
+          senderUsername: message.u?.username,
+          incomingText: userText,
+          suggestedReply,
+        });
+      } else {
+        await this.botNotificationStore.createNotification({
+          auth: this.auth,
+          roomId: subscription.roomId,
+          roomType: subscription.roomType,
+          subscriptionId: subscription.id,
+          messageId: message._id,
+          preferenceColor: subscription.preferenceColor,
+          kind: "info",
+          senderName,
+          senderUsername: message.u?.username,
+          incomingText: userText,
+        });
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error(`[${roomId}] Failed to reply: ${errorMessage}`);
-      await this.rocketChatClient.postMessage(
-        roomId,
-        "I hit an internal error while generating a reply. Please try again."
-      );
+      console.error(`[${subscription.roomId}] Failed to handle message: ${errorMessage}`);
+      if (subscription.preferenceColor === "green") {
+        await this.rocketChatClient.postMessage(
+          subscription.roomId,
+          "I hit an internal error while generating a reply. Please try again."
+        );
+      }
     } finally {
       this.state.markProcessed(message._id);
     }

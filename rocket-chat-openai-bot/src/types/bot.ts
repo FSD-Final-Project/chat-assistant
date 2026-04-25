@@ -6,9 +6,19 @@ export interface ContextEntry {
 }
 
 export interface RocketChatAuth {
+  googleId: string;
   email?: string;
   userToken: string;
   userId: string;
+}
+
+export type PreferenceColor = "red" | "yellow" | "green";
+
+export interface ManagedSubscription {
+  id: string;
+  roomId: string;
+  roomType?: string;
+  preferenceColor: PreferenceColor;
 }
 
 export interface BotConfig {

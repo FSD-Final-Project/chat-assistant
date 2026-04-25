@@ -1,7 +1,5 @@
 import type { BotConfig, RocketChatAuth } from "../types/bot.js";
 import type {
-  RocketChatDirectRoom,
-  RocketChatImListResponse,
   RocketChatMessage,
   RocketChatMessagesResponse,
 } from "../types/rocketchat.js";
@@ -24,12 +22,12 @@ export class RocketChatClient {
     return this.auth.email ?? this.auth.userId;
   }
 
-  async listDirectRooms(): Promise<RocketChatDirectRoom[]> {
-    const json = await this.request<RocketChatImListResponse>("/api/v1/im.list");
-    return json.ims ?? [];
-  }
-
-  async getDirectMessages(roomId: string, oldest?: Date, count = 100): Promise<RocketChatMessage[]> {
+  async getRoomMessages(
+    roomId: string,
+    roomType: string | undefined,
+    oldest?: Date,
+    count = 100
+  ): Promise<RocketChatMessage[]> {
     const sort = encodeURIComponent(JSON.stringify({ ts: 1 }));
     const params = new URLSearchParams({
       roomId,
@@ -41,7 +39,8 @@ export class RocketChatClient {
       params.set("oldest", new Date(oldest.getTime() + 1).toISOString());
     }
 
-    const query = `/api/v1/im.history?${params.toString()}`;
+    const endpoint = this.resolveHistoryEndpoint(roomType);
+    const query = `${endpoint}?${params.toString()}`;
     const json = await this.request<RocketChatMessagesResponse>(query);
     return json.messages ?? [];
   }
@@ -118,6 +117,18 @@ export class RocketChatClient {
     );
 
     return scheduled;
+  }
+
+  private resolveHistoryEndpoint(roomType?: string): string {
+    switch (roomType) {
+      case "c":
+        return "/api/v1/channels.history";
+      case "p":
+        return "/api/v1/groups.history";
+      case "d":
+      default:
+        return "/api/v1/im.history";
+    }
   }
 
   private getRetryDelayMs(response: Response): number {
