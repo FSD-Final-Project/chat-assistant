@@ -16,7 +16,12 @@ export interface BotConfig {
   mainServerUrl: string;
   internalApiKey: string;
   openAiApiKey: string;
+  openAiBaseUrl: string;
   openAiModel: string;
+  ollamaApiKey: string;
+  ollamaBaseUrl: string;
+  ollamaModel: string;
+  llmFallbackToOllama: boolean;
   systemPrompt: string;
   pollIntervalMs: number;
   rcRequestIntervalMs: number;

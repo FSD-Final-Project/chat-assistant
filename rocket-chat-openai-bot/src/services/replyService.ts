@@ -40,12 +40,20 @@ function buildStyleMirrorInstruction(userSamples: string[]): string {
 
 export class ReplyService {
   private readonly openai: OpenAI;
+  private readonly ollama: OpenAI;
 
   constructor(
     private readonly config: BotConfig,
     private readonly contextStore: ContextStore
   ) {
-    this.openai = new OpenAI({ apiKey: config.openAiApiKey });
+    this.openai = new OpenAI({
+      apiKey: config.openAiApiKey || "missing-openai-key",
+      baseURL: config.openAiBaseUrl,
+    });
+    this.ollama = new OpenAI({
+      apiKey: config.ollamaApiKey,
+      baseURL: config.ollamaBaseUrl,
+    });
   }
 
   async generateReply(roomId: string, incomingText: string): Promise<string> {
@@ -85,14 +93,36 @@ export class ReplyService {
       { role: "user" as const, content: userText },
     ];
 
-    const response = await this.openai.responses.create({
-      model: this.config.openAiModel,
-      input,
-    });
+    let output = "";
 
-    const output = response.output_text?.trim();
+    const canUseOpenAi = this.config.openAiApiKey.trim().length > 0;
+    if (canUseOpenAi) {
+      try {
+        const response = await this.openai.responses.create({
+          model: this.config.openAiModel,
+          input,
+        });
+        output = response.output_text?.trim() ?? "";
+      } catch (error) {
+        if (!this.config.llmFallbackToOllama) {
+          throw error;
+        }
+        console.warn("OpenAI request failed. Falling back to Ollama.", error);
+      }
+    }
+
+    if (!output && this.config.llmFallbackToOllama) {
+      const response = await this.ollama.responses.create({
+        model: this.config.ollamaModel,
+        input,
+      });
+      output = response.output_text?.trim() ?? "";
+    }
+
     if (!output) {
-      throw new Error("OpenAI response did not contain text output");
+      throw new Error(
+        "No text output from any configured LLM provider (OpenAI/Ollama). Check API key, model, and endpoint."
+      );
     }
 
     this.contextStore.push(roomId, "user", userText);
