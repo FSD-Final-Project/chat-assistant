@@ -32,6 +32,7 @@ export function BotNotificationCenter() {
     const [notifications, setNotifications] = useState<BotNotificationItem[]>([]);
     const [editingNotificationId, setEditingNotificationId] = useState<string | null>(null);
     const [draftReplies, setDraftReplies] = useState<Record<string, string>>({});
+    const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
     const seenNotificationIds = useRef<Set<string>>(new Set());
 
     useEffect(() => {
@@ -107,6 +108,13 @@ export function BotNotificationCenter() {
         }),
         [notifications]
     );
+
+    const toggleExpandedSection = (key: string) => {
+        setExpandedSections((prev) => ({
+            ...prev,
+            [key]: !prev[key],
+        }));
+    };
 
     const dismissNotification = async (notificationId: string) => {
         try {
@@ -216,7 +224,11 @@ export function BotNotificationCenter() {
 
                         <div className="rounded-xl bg-muted/50 p-3">
                             <p className="text-xs uppercase tracking-wide text-muted-foreground">Incoming message</p>
-                            <p className="mt-1 text-sm text-foreground">{notification.incomingText}</p>
+                            <ExpandableText
+                                text={notification.incomingText}
+                                expanded={Boolean(expandedSections[`${notification.id}:incoming`])}
+                                onToggle={() => toggleExpandedSection(`${notification.id}:incoming`)}
+                            />
                         </div>
 
                         {notification.kind === "approval" && (
@@ -237,9 +249,15 @@ export function BotNotificationCenter() {
                                         <p className="text-xs uppercase tracking-wide text-muted-foreground">
                                             Suggested reply
                                         </p>
-                                        <p className="mt-1 text-sm text-foreground">
-                                            {draftReplies[notification.id] ?? notification.suggestedReply ?? ""}
-                                        </p>
+                                        <ExpandableText
+                                            text={
+                                                draftReplies[notification.id] ??
+                                                notification.suggestedReply ??
+                                                ""
+                                            }
+                                            expanded={Boolean(expandedSections[`${notification.id}:reply`])}
+                                            onToggle={() => toggleExpandedSection(`${notification.id}:reply`)}
+                                        />
                                     </div>
                                 )}
 
@@ -269,6 +287,41 @@ export function BotNotificationCenter() {
                     </div>
                 );
             })}
+        </div>
+    );
+}
+
+function ExpandableText({
+    text,
+    expanded,
+    onToggle,
+}: {
+    text: string;
+    expanded: boolean;
+    onToggle: () => void;
+}) {
+    const isLong = text.length > 180 || text.split(/\r?\n/).length > 4;
+
+    return (
+        <div className="mt-1">
+            <p
+                className={
+                    expanded
+                        ? "whitespace-pre-wrap break-words text-sm text-foreground"
+                        : "max-h-[4.5rem] overflow-hidden text-ellipsis whitespace-pre-wrap break-words text-sm text-foreground"
+                }
+            >
+                {text}
+            </p>
+            {isLong && (
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    className="mt-2 text-xs font-medium text-primary transition-colors hover:text-primary/80"
+                >
+                    {expanded ? "Read less" : "Read more"}
+                </button>
+            )}
         </div>
     );
 }
