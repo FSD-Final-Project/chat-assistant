@@ -68,6 +68,8 @@ function isColorType(value: string | undefined): value is ColorType {
 
 export default function Preferences() {
     const [groups, setGroups] = useState<ColorGroups>(initialGroups);
+    const [searchValue, setSearchValue] = useState("");
+    const [debouncedSearchValue, setDebouncedSearchValue] = useState("");
     const [activeId, setActiveId] = useState<string | null>(null);
     const [activeOriginColor, setActiveOriginColor] = useState<ColorType | null>(null);
     const [isLoadingSubscriptions, setIsLoadingSubscriptions] = useState(true);
@@ -86,6 +88,16 @@ export default function Preferences() {
             },
         })
     );
+
+    useEffect(() => {
+        const timeoutId = window.setTimeout(() => {
+            setDebouncedSearchValue(searchValue.trim().toLowerCase());
+        }, 250);
+
+        return () => {
+            window.clearTimeout(timeoutId);
+        };
+    }, [searchValue]);
 
     useEffect(() => {
         let isMounted = true;
@@ -255,15 +267,37 @@ export default function Preferences() {
     };
 
     const activeMember = getActiveMember();
+    const filterMembers = (members: GroupMember[]) =>
+        debouncedSearchValue
+            ? members.filter((member) =>
+                  member.name.toLowerCase().includes(debouncedSearchValue)
+              )
+            : members;
+
+    const filteredGroups: ColorGroups = {
+        red: filterMembers(groups.red),
+        yellow: filterMembers(groups.yellow),
+        green: filterMembers(groups.green),
+    };
+    const totalVisibleSubscriptions =
+        filteredGroups.red.length +
+        filteredGroups.yellow.length +
+        filteredGroups.green.length;
+    const totalSubscriptions =
+        groups.red.length + groups.yellow.length + groups.green.length;
+    const subtitle = isLoadingSubscriptions
+        ? "Loading subscriptions..."
+        : debouncedSearchValue
+          ? `${totalVisibleSubscriptions} matching subscription${totalVisibleSubscriptions === 1 ? "" : "s"} found`
+          : `${totalSubscriptions} subscription${totalSubscriptions === 1 ? "" : "s"} found`;
 
     return (
         <DashboardLayout
             title="Preferences"
-            subtitle={
-                isLoadingSubscriptions
-                    ? "Loading subscriptions..."
-                    : `${groups.yellow.length} subscription${groups.yellow.length === 1 ? "" : "s"} found`
-            }
+            subtitle={subtitle}
+            searchValue={searchValue}
+            onSearchChange={setSearchValue}
+            searchPlaceholder="Search subscriptions..."
         >
             <DndContext
                 sensors={sensors}
@@ -273,9 +307,9 @@ export default function Preferences() {
             >
                 {/* Color Group Cards */}
                 <div className="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-3 xl:gap-6">
-                    <DroppableColorGroup color="red" members={groups.red} />
-                    <DroppableColorGroup color="yellow" members={groups.yellow} />
-                    <DroppableColorGroup color="green" members={groups.green} />
+                    <DroppableColorGroup color="red" members={filteredGroups.red} />
+                    <DroppableColorGroup color="yellow" members={filteredGroups.yellow} />
+                    <DroppableColorGroup color="green" members={filteredGroups.green} />
                 </div>
 
                 <DragOverlay>
