@@ -14,7 +14,9 @@ interface RocketIntegrationBody {
 interface RocketSubscriptionsSyncBody {
   googleId?: string;
   email?: string;
+  mode?: "full" | "delta";
   subscriptions?: Array<Record<string, unknown>>;
+  removedSubscriptionIds?: string[];
 }
 
 interface RocketMessagesSyncBody {
@@ -80,6 +82,10 @@ export class UsersController {
 
     const providedKey = request.header("x-internal-api-key");
     return Boolean(providedKey && providedKey === internalApiKey);
+  }
+
+  private getAuthenticatedUser(request: Request): SessionUser | undefined {
+    return request.user as SessionUser | undefined;
   }
 
   private getRocketBaseUrl(): string {
@@ -266,15 +272,34 @@ export class UsersController {
 
     const googleId = body.googleId?.trim();
     const email = body.email?.trim().toLowerCase();
+    const mode = body.mode ?? "delta";
     const subscriptions = body.subscriptions ?? [];
+    const removedSubscriptionIds = (body.removedSubscriptionIds ?? []).filter(
+      (subscriptionId): subscriptionId is string => typeof subscriptionId === "string",
+    );
 
     if (!googleId || !email) {
       response.status(400).json({ message: "googleId and email are required" });
       return;
     }
 
-    await this.rocketSyncService.upsertSubscriptions(googleId, email, subscriptions);
-    response.status(200).json({ success: true, count: subscriptions.length });
+    if (mode === "full") {
+      await this.rocketSyncService.reconcileSubscriptions(googleId, email, subscriptions);
+    } else {
+      await this.rocketSyncService.applySubscriptionDelta(
+        googleId,
+        email,
+        subscriptions,
+        removedSubscriptionIds,
+      );
+    }
+
+    response.status(200).json({
+      success: true,
+      count: subscriptions.length,
+      removedCount: removedSubscriptionIds.length,
+      mode,
+    });
   }
 
   @Post("internal/rocket-sync/messages")
@@ -377,8 +402,8 @@ export class UsersController {
     @Res() response: Response,
     @Body() body: RocketIntegrationBody,
   ) {
-    const sessionUser = request.user as SessionUser | undefined;
-    if (!request.isAuthenticated() || !sessionUser) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
       response.status(401).json({ message: "Unauthorized" });
       return;
     }
@@ -418,8 +443,8 @@ export class UsersController {
 
   @Get("me/rocket-subscriptions")
   async getMyRocketSubscriptions(@Req() request: Request, @Res() response: Response) {
-    const sessionUser = request.user as SessionUser | undefined;
-    if (!request.isAuthenticated() || !sessionUser) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
       response.status(401).json({ message: "Unauthorized" });
       return;
     }
@@ -443,8 +468,8 @@ export class UsersController {
     @Res() response: Response,
     @Body() body: UpdateRocketSubscriptionPreferenceColorBody,
   ) {
-    const sessionUser = request.user as SessionUser | undefined;
-    if (!request.isAuthenticated() || !sessionUser) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
       response.status(401).json({ message: "Unauthorized" });
       return;
     }
@@ -486,8 +511,8 @@ export class UsersController {
 
   @Get("me/bot-notifications")
   async getMyBotNotifications(@Req() request: Request, @Res() response: Response) {
-    const sessionUser = request.user as SessionUser | undefined;
-    if (!request.isAuthenticated() || !sessionUser) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
       response.status(401).json({ message: "Unauthorized" });
       return;
     }
@@ -500,8 +525,8 @@ export class UsersController {
 
   @Get("me/bot-notifications/stream")
   async streamMyBotNotifications(@Req() request: Request, @Res() response: Response) {
-    const sessionUser = request.user as SessionUser | undefined;
-    if (!request.isAuthenticated() || !sessionUser) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
       response.status(401).json({ message: "Unauthorized" });
       return;
     }
@@ -544,8 +569,8 @@ export class UsersController {
     @Res() response: Response,
     @Body() body: ApproveBotNotificationBody,
   ) {
-    const sessionUser = request.user as SessionUser | undefined;
-    if (!request.isAuthenticated() || !sessionUser) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
       response.status(401).json({ message: "Unauthorized" });
       return;
     }
@@ -581,8 +606,8 @@ export class UsersController {
 
   @Post("me/bot-notifications/:notificationId/dismiss")
   async dismissMyBotNotification(@Req() request: Request, @Res() response: Response) {
-    const sessionUser = request.user as SessionUser | undefined;
-    if (!request.isAuthenticated() || !sessionUser) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
       response.status(401).json({ message: "Unauthorized" });
       return;
     }
@@ -610,8 +635,8 @@ export class UsersController {
     @Req() request: Request,
     @Res() response: Response,
   ) {
-    const sessionUser = request.user as SessionUser | undefined;
-    if (!request.isAuthenticated() || !sessionUser) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
       response.status(401).json({ message: "Unauthorized" });
       return;
     }

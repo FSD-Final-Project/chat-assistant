@@ -13,13 +13,26 @@ interface GoogleProfileUserInput {
   picture?: string;
 }
 
+interface LocalUserInput {
+  id: string;
+  email: string;
+  name: string;
+  passwordHash: string;
+}
+
 @Injectable()
 export class UsersService {
   constructor(@InjectModel(User.name) private readonly userModel: Model<UserDocument>) {}
 
   async upsertGoogleUser(input: GoogleProfileUserInput): Promise<UserDocument> {
+    const existingUser = await this.userModel.findOne({
+      $or: [{ googleId: input.id }, { email: input.email }],
+    });
+
     const user = await this.userModel.findOneAndUpdate(
-      { googleId: input.id },
+      existingUser
+        ? { _id: existingUser._id }
+        : { googleId: input.id },
       {
         $set: {
           email: input.email,
@@ -27,8 +40,7 @@ export class UsersService {
           givenName: input.givenName,
           familyName: input.familyName,
           picture: input.picture,
-        },
-        $setOnInsert: {
+          authProvider: "google",
           googleId: input.id,
         },
       },
@@ -38,6 +50,20 @@ export class UsersService {
     if (!user) {
       throw new Error("Failed to upsert user");
     }
+
+    return user;
+  }
+
+  async createLocalUser(input: LocalUserInput): Promise<UserDocument> {
+    const user = await this.userModel.create({
+      googleId: input.id,
+      email: input.email,
+      name: input.name,
+      authProvider: "local",
+      localAuth: {
+        passwordHash: input.passwordHash,
+      },
+    });
 
     return user;
   }
@@ -70,6 +96,30 @@ export class UsersService {
         },
       },
       { new: true },
+    );
+  }
+
+  async saveRefreshToken(googleId: string, refreshTokenHash: string, refreshTokenExpiresAt: Date): Promise<void> {
+    await this.userModel.updateOne(
+      { googleId },
+      {
+        $set: {
+          "localAuth.refreshTokenHash": refreshTokenHash,
+          "localAuth.refreshTokenExpiresAt": refreshTokenExpiresAt,
+        },
+      },
+    );
+  }
+
+  async clearRefreshToken(googleId: string): Promise<void> {
+    await this.userModel.updateOne(
+      { googleId },
+      {
+        $unset: {
+          "localAuth.refreshTokenHash": "",
+          "localAuth.refreshTokenExpiresAt": "",
+        },
+      },
     );
   }
 
