@@ -1,10 +1,5 @@
 export type ChatRole = "user" | "assistant";
 
-export interface ContextEntry {
-  role: ChatRole;
-  text: string;
-}
-
 export interface RocketChatAuth {
   googleId: string;
   email?: string;
@@ -21,9 +16,18 @@ export interface ManagedSubscription {
   preferenceColor: PreferenceColor;
 }
 
+export interface SummaryContextItem {
+  subscriptionId: string;
+  roomId: string;
+  roomType?: string;
+  summary: string;
+  score?: number;
+}
+
 export interface BotContextPayload {
   subscription: ManagedSubscription;
-  context: ContextEntry[];
+  currentSummary: SummaryContextItem | null;
+  relevantSummaries: SummaryContextItem[];
 }
 
 export interface BotConfig {
@@ -32,6 +36,8 @@ export interface BotConfig {
   internalApiKey: string;
   openAiApiKey: string;
   openAiModel: string;
+  summaryModel: string;
+  embeddingModel: string;
   systemPrompt: string;
   rcRequestIntervalMs: number;
   rcRetryBackoffMs: number;

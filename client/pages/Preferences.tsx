@@ -319,7 +319,7 @@ export default function Preferences() {
                                 {activeMember.avatars.slice(0, 2).map((avatar, i) => (
                                     <Avatar key={i} className="h-10 w-10 border-2 border-card-light">
                                         <AvatarImage src={avatar} />
-                                        <AvatarFallback>{activeMember.name[0]}</AvatarFallback>
+                                        <AvatarFallback seed={activeMember.name}>{activeMember.name[0]}</AvatarFallback>
                                     </Avatar>
                                 ))}
                             </div>

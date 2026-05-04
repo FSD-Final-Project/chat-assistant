@@ -35,6 +35,22 @@ interface RocketHistoryResponse {
   messages?: RocketMessagePayload[];
 }
 
+interface MissingSummarySubscription {
+  id: string;
+  roomId: string;
+  roomType?: string;
+}
+
+interface OpenAiResponsesApiPayload {
+  output_text?: string;
+  output?: Array<{
+    content?: Array<{
+      type?: string;
+      text?: string;
+    }>;
+  }>;
+}
+
 @Injectable()
 export class UserDataWorkerService {
   private readonly logger = new Logger(UserDataWorkerService.name);
@@ -55,6 +71,18 @@ export class UserDataWorkerService {
     ]);
   }
 
+  async triggerSyncForUser(googleId: string): Promise<void> {
+    const integrations = await this.fetchIntegrations();
+    const integration = integrations.find((candidate) => candidate.googleId === googleId);
+    if (!integration) {
+      throw new Error(`Integrated Rocket user not found for googleId '${googleId}'`);
+    }
+
+    this.logger.log(`Triggered immediate sync for ${integration.email}`);
+    await this.runFullSubscriptionSyncForUser(integration);
+    await this.ensureMissingSummaries(integration);
+  }
+
   private async runFullSubscriptionsLoop(): Promise<void> {
     while (true) {
       try {
@@ -67,6 +95,7 @@ export class UserDataWorkerService {
 
         for (const integration of integrations) {
           await this.runFullSubscriptionSyncForUser(integration);
+          await this.ensureMissingSummaries(integration);
         }
 
         this.logger.log(`Full sync ${this.fullSyncIteration}: cycle completed`);
@@ -91,6 +120,7 @@ export class UserDataWorkerService {
 
         for (const integration of integrations) {
           await this.runIncrementalSubscriptionSyncForUser(integration);
+          await this.ensureMissingSummaries(integration);
         }
 
         this.logger.log(`Incremental sync ${this.incrementalSyncIteration}: cycle completed`);
@@ -126,6 +156,19 @@ export class UserDataWorkerService {
 
     if (subscriptions.length === 0) {
       return;
+    }
+
+    for (const subscription of subscriptions) {
+      if (!subscription.rid) {
+        continue;
+      }
+
+      await this.refreshRoomSummary(
+        integration,
+        subscription._id,
+        subscription.rid,
+        typeof subscription.t === "string" ? subscription.t : undefined,
+      );
     }
 
     const latestUpdatedAt = this.getLatestSubscriptionTimestamp(subscriptions);
@@ -175,6 +218,12 @@ export class UserDataWorkerService {
 
       await this.syncRoomMessages(
         integration,
+        subscription.rid,
+        typeof subscription.t === "string" ? subscription.t : undefined,
+      );
+      await this.refreshRoomSummary(
+        integration,
+        subscription._id,
         subscription.rid,
         typeof subscription.t === "string" ? subscription.t : undefined,
       );
@@ -276,8 +325,187 @@ export class UserDataWorkerService {
     }
   }
 
+  private async refreshRoomSummary(
+    integration: RocketIntegrationIdentity,
+    subscriptionId: string | undefined,
+    roomId: string,
+    roomType?: string,
+  ): Promise<void> {
+    if (!subscriptionId) {
+      return;
+    }
+
+    const messages = await this.loadRecentRoomTranscript(integration, roomId, roomType);
+    if (messages.length === 0) {
+      return;
+    }
+
+    const transcript = this.buildTranscript(messages);
+    const summary = await this.generateSummary(transcript);
+    const embedding = await this.generateEmbedding(summary);
+    const lastMessageId = typeof messages[messages.length - 1]?._id === "string"
+      ? messages[messages.length - 1]._id
+      : undefined;
+
+    await this.postToMainServer("/users/internal/rocket-summaries", {
+      googleId: integration.googleId,
+      email: integration.email,
+      subscriptionId,
+      roomId,
+      roomType,
+      summary,
+      embedding,
+      lastMessageId,
+      sourceMessageCount: messages.length,
+      source: "worker",
+    });
+  }
+
+  private async ensureMissingSummaries(
+    integration: RocketIntegrationIdentity,
+  ): Promise<void> {
+    const response = await fetch(
+      `${this.mainServerUrl}/users/internal/rocket-summaries/missing?googleId=${encodeURIComponent(
+        integration.googleId,
+      )}`,
+      {
+        headers: {
+          "X-Internal-Api-Key": this.internalApiKey,
+        },
+      },
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(
+        `Failed to fetch missing summaries for '${integration.email}': ${response.status} ${body}`,
+      );
+    }
+
+    const payload = (await response.json()) as {
+      subscriptions?: MissingSummarySubscription[];
+    };
+    const missingSubscriptions = payload.subscriptions ?? [];
+    if (missingSubscriptions.length === 0) {
+      return;
+    }
+
+    this.logger.log(
+      `Backfilling ${missingSubscriptions.length} missing summary subscription(s) for ${integration.email}`,
+    );
+
+    for (const subscription of missingSubscriptions) {
+      await this.refreshRoomSummary(
+        integration,
+        subscription.id,
+        subscription.roomId,
+        subscription.roomType,
+      );
+    }
+  }
+
+  private async loadRecentRoomTranscript(
+    integration: RocketIntegrationIdentity,
+    roomId: string,
+    roomType?: string,
+  ): Promise<RocketMessagePayload[]> {
+    const endpoint = this.resolveHistoryEndpoint(roomType);
+    const sort = encodeURIComponent(JSON.stringify({ ts: 1 }));
+    const params = new URLSearchParams({
+      roomId,
+      count: String(this.summarySourceMessageLimit),
+      sort,
+    });
+
+    const history = await this.requestRocket<RocketHistoryResponse>(
+      integration,
+      `${endpoint}?${params.toString()}`,
+    );
+
+    return history.messages ?? [];
+  }
+
+  private buildTranscript(messages: RocketMessagePayload[]): string {
+    return messages
+      .filter((message) => typeof message.msg === "string" && message.msg.trim().length > 0)
+      .map((message) => {
+        const sender =
+          message.u &&
+          typeof message.u === "object" &&
+          typeof (message.u as { username?: unknown }).username === "string"
+            ? (message.u as { username: string }).username
+            : "unknown";
+
+        return `${sender}: ${String(message.msg).trim()}`;
+      })
+      .join("\n");
+  }
+
+  private async generateSummary(transcript: string): Promise<string> {
+    const response = await this.fetchWithContext("OpenAI summary generation", "https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.openAiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.summaryModel,
+        input: [
+          {
+            role: "system",
+            content:
+              "Summarize this Rocket.Chat conversation for retrieval use. Keep only useful context: stable facts, preferences, ongoing topics, tasks, commitments, and relevant tone cues. Do not mention that this is a conversation, chat, Rocket.Chat, user names unless they matter, or any meta phrases like 'the conversation shows' or 'the user discusses'. Write compact notes, not narration. Stay under 220 words and return only plain summary text.",
+          },
+          {
+            role: "user",
+            content: transcript,
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to generate summary: ${response.status} ${body}`);
+    }
+
+    const payload = (await response.json()) as OpenAiResponsesApiPayload;
+    const summary = this.cleanSummaryText(this.extractOpenAiText(payload));
+    if (!summary) {
+      throw new Error("OpenAI summary response did not contain output_text");
+    }
+
+    return summary;
+  }
+
+  private async generateEmbedding(text: string): Promise<number[]> {
+    const response = await this.fetchWithContext("OpenAI embedding generation", "https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.openAiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.embeddingModel,
+        input: text,
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to generate embedding: ${response.status} ${body}`);
+    }
+
+    const payload = (await response.json()) as {
+      data?: Array<{ embedding?: number[] }>;
+    };
+
+    return payload.data?.[0]?.embedding ?? [];
+  }
+
   private async fetchIntegrations(): Promise<RocketIntegrationIdentity[]> {
-    const response = await fetch(`${this.mainServerUrl}/users/internal/rocket-auth/all`, {
+    const url = `${this.mainServerUrl}/users/internal/rocket-auth/all`;
+    const response = await this.fetchWithContext("fetch integrations from main server", url, {
       headers: {
         "X-Internal-Api-Key": this.internalApiKey,
       },
@@ -292,7 +520,8 @@ export class UserDataWorkerService {
   }
 
   private async postToMainServer(path: string, body: Record<string, unknown>): Promise<void> {
-    const response = await fetch(`${this.mainServerUrl}${path}`, {
+    const url = `${this.mainServerUrl}${path}`;
+    const response = await this.fetchWithContext(`persist Rocket data to main server (${path})`, url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -319,13 +548,18 @@ export class UserDataWorkerService {
 
       this.nextRocketRequestAt = Date.now() + this.rcRequestIntervalMs;
 
-      const response = await fetch(`${this.rcUrl}${path}`, {
+      const url = `${this.rcUrl}${path}`;
+      const response = await this.fetchWithContext(
+        `Rocket.Chat request for '${integration.email}'`,
+        url,
+        {
         headers: {
           "Content-Type": "application/json",
           "X-Auth-Token": integration.userToken,
           "X-User-Id": integration.userId,
         },
-      });
+        },
+      );
 
       if (response.status === 429) {
         const retryDelayMs = this.getRetryDelayMs(response);
@@ -471,6 +705,27 @@ export class UserDataWorkerService {
     return this.getPositiveInt("MAIN_SERVER_BATCH_SIZE", 25);
   }
 
+  private get summarySourceMessageLimit(): number {
+    return this.getPositiveInt("SUMMARY_SOURCE_MESSAGE_LIMIT", 100);
+  }
+
+  private get openAiApiKey(): string {
+    const value = process.env.OPENAI_API_KEY;
+    if (!value) {
+      throw new Error("Missing required env var: OPENAI_API_KEY");
+    }
+
+    return value;
+  }
+
+  private get summaryModel(): string {
+    return process.env.SUMMARY_MODEL ?? "gpt-4.1-mini";
+  }
+
+  private get embeddingModel(): string {
+    return process.env.EMBEDDING_MODEL ?? "text-embedding-3-small";
+  }
+
   private getPositiveInt(name: string, fallback: number): number {
     const raw = process.env[name];
     if (!raw) {
@@ -516,5 +771,72 @@ export class UserDataWorkerService {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private extractOpenAiText(payload: OpenAiResponsesApiPayload): string {
+    const directText = payload.output_text?.trim();
+    if (directText) {
+      return directText;
+    }
+
+    const nestedText = (payload.output ?? [])
+      .flatMap((item) => item.content ?? [])
+      .filter((item) => item.type === "output_text" || item.type === "text" || !item.type)
+      .map((item) => item.text?.trim() ?? "")
+      .filter((text) => text.length > 0)
+      .join("\n")
+      .trim();
+
+    return nestedText;
+  }
+
+  private cleanSummaryText(text: string): string {
+    return text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .filter(
+        (line) =>
+          !/^(the )?(rocket\.chat )?(conversation|chat) (shows|is about|focuses on)\b/i.test(line) &&
+          !/^the user (discusses|talks about|mentions)\b/i.test(line)
+      )
+      .join("\n")
+      .trim();
+  }
+
+  private async fetchWithContext(
+    label: string,
+    url: string,
+    init?: RequestInit,
+  ): Promise<Response> {
+    try {
+      return await fetch(url, init);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const causeMessage =
+        error instanceof Error &&
+        "cause" in error &&
+        error.cause &&
+        typeof error.cause === "object" &&
+        "message" in error.cause &&
+        typeof (error.cause as { message?: unknown }).message === "string"
+          ? (error.cause as { message: string }).message
+          : undefined;
+      const codeMessage =
+        error instanceof Error &&
+        "cause" in error &&
+        error.cause &&
+        typeof error.cause === "object" &&
+        "code" in error.cause &&
+        typeof (error.cause as { code?: unknown }).code === "string"
+          ? (error.cause as { code: string }).code
+          : undefined;
+
+      const details = [message, codeMessage, causeMessage]
+        .filter((value, index, array) => Boolean(value) && array.indexOf(value) === index)
+        .join(" | ");
+
+      throw new Error(`${label} failed for ${url}: ${details}`);
+    }
   }
 }

@@ -52,6 +52,8 @@ export function loadConfig(): BotConfig {
     internalApiKey: getRequiredEnv("INTERNAL_API_KEY"),
     openAiApiKey: getRequiredEnv("OPENAI_API_KEY"),
     openAiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
+    summaryModel: process.env.SUMMARY_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
+    embeddingModel: process.env.EMBEDDING_MODEL ?? "text-embedding-3-small",
     systemPrompt: process.env.SYSTEM_PROMPT ?? "You are a helpful Rocket.Chat assistant.",
     rcRequestIntervalMs: getNumberEnv("RC_REQUEST_INTERVAL_MS", 400),
     rcRetryBackoffMs: getNumberEnv("RC_RETRY_BACKOFF_MS", 5000),

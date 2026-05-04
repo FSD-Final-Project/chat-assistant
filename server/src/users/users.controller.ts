@@ -34,7 +34,21 @@ interface InternalBotContextBody {
   roomType?: string;
   subscriptionId?: string;
   contextLimit?: number;
+  queryEmbedding?: number[];
   message?: Record<string, unknown>;
+}
+
+interface InternalRocketSummaryBody {
+  googleId?: string;
+  email?: string;
+  subscriptionId?: string;
+  roomId?: string;
+  roomType?: string;
+  summary?: string;
+  embedding?: number[];
+  lastMessageId?: string;
+  sourceMessageCount?: number;
+  source?: "worker" | "bot";
 }
 
 interface RocketSubscriptionPayloadUser {
@@ -76,9 +90,18 @@ interface ApproveBotNotificationBody {
   replyText?: string;
 }
 
-interface ContextEntryResponse {
-  role: "user" | "assistant";
-  text: string;
+interface SummaryContextResponse {
+  subscriptionId: string;
+  roomId: string;
+  roomType?: string;
+  summary: string;
+  score?: number;
+}
+
+interface ActiveChatsQuery {
+  start?: string;
+  end?: string;
+  limit?: string;
 }
 
 @Controller("users")
@@ -110,6 +133,15 @@ export class UsersController {
     }
 
     return rocketUrl.replace(/\/+$/, "");
+  }
+
+  private getWorkerBaseUrl(): string {
+    const workerUrl = process.env.USER_DATA_WORKER_URL?.trim();
+    if (!workerUrl) {
+      throw new Error("Missing USER_DATA_WORKER_URL on server");
+    }
+
+    return workerUrl.replace(/\/+$/, "");
   }
 
   private buildSubscriptionAvatarUrl(
@@ -168,58 +200,110 @@ export class UsersController {
     };
   }
 
-  private getMessageTimestamp(
-    payload: Record<string, unknown>,
-    fallbackDate?: Date,
-  ): number {
-    const ts = payload.ts;
-    if (typeof ts === "string") {
-      const parsed = new Date(ts).getTime();
-      if (Number.isFinite(parsed)) {
-        return parsed;
-      }
-    }
-
-    if (
-      typeof ts === "object" &&
-      ts !== null &&
-      "$date" in ts &&
-      typeof (ts as { $date?: unknown }).$date === "number"
-    ) {
-      return (ts as { $date: number }).$date;
-    }
-
-    return fallbackDate?.getTime() ?? 0;
+  private mapSummaryContext(summary: {
+    subscriptionId: string;
+    roomId: string;
+    roomType?: string;
+    summary: string;
+  }, score?: number): SummaryContextResponse {
+    return {
+      subscriptionId: summary.subscriptionId,
+      roomId: summary.roomId,
+      roomType: summary.roomType,
+      summary: summary.summary,
+      score,
+    };
   }
 
-  private buildContextEntries(
-    messages: Array<{
-      messageId: string;
-      payload: Record<string, unknown>;
-      createdAt?: Date;
+  private getSubscriptionDisplayName(payload: Record<string, unknown>, roomId: string): string {
+    const typedPayload = payload as RocketSubscriptionPayload;
+    return (
+      typedPayload.fname ??
+      typedPayload.u?.name ??
+      typedPayload.name ??
+      typedPayload.u?.username ??
+      roomId
+    );
+  }
+
+  private cosineSimilarity(left: number[], right: number[]): number {
+    if (left.length === 0 || right.length === 0 || left.length !== right.length) {
+      return 0;
+    }
+
+    let dot = 0;
+    let leftMagnitude = 0;
+    let rightMagnitude = 0;
+
+    for (let index = 0; index < left.length; index += 1) {
+      const leftValue = left[index] ?? 0;
+      const rightValue = right[index] ?? 0;
+      dot += leftValue * rightValue;
+      leftMagnitude += leftValue * leftValue;
+      rightMagnitude += rightValue * rightValue;
+    }
+
+    if (leftMagnitude === 0 || rightMagnitude === 0) {
+      return 0;
+    }
+
+    return dot / (Math.sqrt(leftMagnitude) * Math.sqrt(rightMagnitude));
+  }
+
+  private rankRelevantSummaries(
+    summaries: Array<{
+      subscriptionId: string;
+      roomId: string;
+      roomType?: string;
+      summary: string;
+      embedding: number[];
     }>,
-    currentMessageId: string,
-    currentRocketUserId: string,
+    queryEmbedding: number[] | undefined,
+    currentRoomId: string,
     limit: number,
-  ): ContextEntryResponse[] {
-    return messages
-      .filter((message) => message.messageId !== currentMessageId)
-      .filter((message) => typeof message.payload.msg === "string")
-      .sort(
-        (left, right) =>
-          this.getMessageTimestamp(left.payload, left.createdAt) -
-          this.getMessageTimestamp(right.payload, right.createdAt),
-      )
-      .slice(-limit)
-      .map((message) => ({
-        role:
-          message.payload.u &&
-          typeof message.payload.u === "object" &&
-          (message.payload.u as { _id?: string })._id === currentRocketUserId
-            ? "assistant"
-            : "user",
-        text: String(message.payload.msg),
-      }));
+  ): SummaryContextResponse[] {
+    const candidates = summaries.filter(
+      (summary) =>
+        summary.roomId !== currentRoomId &&
+        summary.summary.trim().length > 0 &&
+        summary.embedding.length > 0,
+    );
+
+    if (!queryEmbedding || queryEmbedding.length === 0) {
+      return candidates
+        .slice(0, limit)
+        .map((summary) => this.mapSummaryContext(summary));
+    }
+
+    return candidates
+      .map((summary) => ({
+        summary,
+        score: this.cosineSimilarity(queryEmbedding, summary.embedding),
+      }))
+      .sort((left, right) => right.score - left.score)
+      .slice(0, limit)
+      .map(({ summary, score }) => this.mapSummaryContext(summary, score));
+  }
+
+  private async triggerWorkerSyncForUser(googleId: string): Promise<void> {
+    const internalApiKey = process.env.INTERNAL_API_KEY;
+    if (!internalApiKey) {
+      throw new Error("Missing INTERNAL_API_KEY on server");
+    }
+
+    const response = await fetch(`${this.getWorkerBaseUrl()}/internal/sync-user`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Api-Key": internalApiKey,
+      },
+      body: JSON.stringify({ googleId }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to trigger worker sync: ${response.status} ${body}`);
+    }
   }
 
   @Get("internal/rocket-auth/all")
@@ -319,6 +403,38 @@ export class UsersController {
         roomId: subscription.roomId,
         roomType: subscription.roomType,
         preferenceColor: subscription.preferenceColor,
+      })),
+    });
+  }
+
+  @Get("internal/rocket-summaries/missing")
+  async getInternalSubscriptionsMissingSummaries(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Query() query: InternalBotSubscriptionsQuery,
+  ) {
+    try {
+      if (!this.isInternalRequestAuthorized(request)) {
+        response.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+    } catch {
+      response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
+      return;
+    }
+
+    const googleId = query.googleId?.trim();
+    if (!googleId) {
+      response.status(400).json({ message: "googleId is required" });
+      return;
+    }
+
+    const subscriptions = await this.rocketSyncService.listSubscriptionsMissingSummaries(googleId);
+    response.status(200).json({
+      subscriptions: subscriptions.map((subscription) => ({
+        id: subscription.subscriptionId,
+        roomId: subscription.roomId,
+        roomType: subscription.roomType,
       })),
     });
   }
@@ -465,6 +581,61 @@ export class UsersController {
     });
   }
 
+  @Post("internal/rocket-summaries")
+  async saveInternalRocketSummary(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: InternalRocketSummaryBody,
+  ) {
+    try {
+      if (!this.isInternalRequestAuthorized(request)) {
+        response.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+    } catch {
+      response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
+      return;
+    }
+
+    const googleId = body.googleId?.trim();
+    const email = body.email?.trim().toLowerCase();
+    const subscriptionId = body.subscriptionId?.trim();
+    const roomId = body.roomId?.trim();
+    const summary = body.summary?.trim();
+    const embedding = Array.isArray(body.embedding)
+      ? body.embedding.filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+      : [];
+    const source = body.source ?? "worker";
+
+    if (!googleId || !email || !subscriptionId || !roomId || !summary) {
+      response.status(400).json({
+        message: "googleId, email, subscriptionId, roomId, and summary are required",
+      });
+      return;
+    }
+
+    const savedSummary = await this.rocketSyncService.upsertSummary({
+      appUserGoogleId: googleId,
+      appUserEmail: email,
+      subscriptionId,
+      roomId,
+      roomType: body.roomType?.trim(),
+      summary,
+      embedding,
+      lastMessageId: body.lastMessageId?.trim(),
+      sourceMessageCount:
+        typeof body.sourceMessageCount === "number" && body.sourceMessageCount > 0
+          ? Math.floor(body.sourceMessageCount)
+          : undefined,
+      source,
+    });
+
+    response.status(200).json({
+      success: true,
+      summaryId: savedSummary?._id,
+    });
+  }
+
   @Post("internal/bot-context")
   async getInternalBotContext(
     @Req() request: Request,
@@ -490,7 +661,10 @@ export class UsersController {
     const contextLimit =
       typeof body.contextLimit === "number" && body.contextLimit > 0
         ? Math.floor(body.contextLimit)
-        : 12;
+        : 4;
+    const queryEmbedding = Array.isArray(body.queryEmbedding)
+      ? body.queryEmbedding.filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+      : undefined;
 
     if (!googleId || !email || !roomId || !message) {
       response.status(400).json({
@@ -516,23 +690,15 @@ export class UsersController {
       return;
     }
 
-    const user = await this.usersService.findByGoogleId(googleId);
-    const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
-    if (!rocketAuth) {
-      response.status(404).json({ message: "Rocket.Chat credentials not found for user" });
-      return;
-    }
-
-    const recentMessages = await this.rocketSyncService.listRecentMessages(
+    const currentSummary = await this.rocketSyncService.findSummaryBySubscriptionId(
       googleId,
-      roomId,
-      Math.max(contextLimit + 1, contextLimit * 2),
+      subscription.subscriptionId,
     );
-
-    const context = this.buildContextEntries(
-      recentMessages,
-      messageId,
-      rocketAuth.userId,
+    const allSummaries = await this.rocketSyncService.listSummaries(googleId);
+    const relevantSummaries = this.rankRelevantSummaries(
+      allSummaries,
+      queryEmbedding,
+      roomId,
       contextLimit,
     );
 
@@ -543,7 +709,8 @@ export class UsersController {
         roomType: subscription.roomType,
         preferenceColor: subscription.preferenceColor,
       },
-      context,
+      currentSummary: currentSummary ? this.mapSummaryContext(currentSummary) : null,
+      relevantSummaries,
     });
   }
 
@@ -578,6 +745,16 @@ export class UsersController {
       return;
     }
 
+    try {
+      await this.triggerWorkerSyncForUser(sessionUser.id);
+    } catch (error) {
+      console.error(
+        `[RocketIntegration] Failed to trigger worker sync for ${sessionUser.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
     response.status(200).json({
       success: true,
       user: {
@@ -610,6 +787,55 @@ export class UsersController {
         payload: subscription.payload,
         avatarUrl: `/users/me/rocket-subscriptions/${encodeURIComponent(subscription.subscriptionId)}/avatar`,
       })),
+    });
+  }
+
+  @Get("me/active-chats")
+  async getMyActiveChats(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Query() query: ActiveChatsQuery,
+  ) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const startDate = query.start ? new Date(query.start) : undefined;
+    const endDate = query.end ? new Date(query.end) : undefined;
+    const limit = query.limit ? Number.parseInt(query.limit, 10) : 8;
+
+    if (startDate && Number.isNaN(startDate.getTime())) {
+      response.status(400).json({ message: "Invalid start date" });
+      return;
+    }
+
+    if (endDate && Number.isNaN(endDate.getTime())) {
+      response.status(400).json({ message: "Invalid end date" });
+      return;
+    }
+
+    const activeChats = await this.rocketSyncService.listActiveChats(sessionUser.id, {
+      startDate,
+      endDate,
+      limit: Number.isFinite(limit) && limit > 0 ? limit : 8,
+    });
+
+    response.status(200).json({
+      chats: activeChats
+        .filter((chat) => chat.subscription)
+        .map((chat) => ({
+          id: chat.subscription!.subscriptionId,
+          roomId: chat.roomId,
+          roomType: chat.subscription!.roomType,
+          name: this.getSubscriptionDisplayName(chat.subscription!.payload, chat.roomId),
+          messageCount: chat.messageCount,
+          summary: chat.summary?.summary ?? "",
+          avatarUrl: `/users/me/rocket-subscriptions/${encodeURIComponent(
+            chat.subscription!.subscriptionId,
+          )}/avatar`,
+        })),
     });
   }
 

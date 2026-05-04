@@ -7,6 +7,10 @@ import {
   RocketMessageSchema,
 } from "./schemas/rocket-message.schema";
 import {
+  RocketSummaryRecord,
+  RocketSummarySchema,
+} from "./schemas/rocket-summary.schema";
+import {
   RocketSubscriptionRecord,
   RocketSubscriptionSchema,
 } from "./schemas/rocket-subscription.schema";
@@ -24,6 +28,7 @@ import { UsersService } from "./users.service";
       { name: User.name, schema: UserSchema },
       { name: RocketSubscriptionRecord.name, schema: RocketSubscriptionSchema },
       { name: RocketMessageRecord.name, schema: RocketMessageSchema },
+      { name: RocketSummaryRecord.name, schema: RocketSummarySchema },
       { name: BotNotificationRecord.name, schema: BotNotificationSchema },
     ]),
   ],
