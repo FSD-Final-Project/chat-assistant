@@ -21,6 +21,11 @@ export interface ManagedSubscription {
   preferenceColor: PreferenceColor;
 }
 
+export interface BotContextPayload {
+  subscription: ManagedSubscription;
+  context: ContextEntry[];
+}
+
 export interface BotConfig {
   rcUrl: string;
   mainServerUrl: string;
@@ -28,7 +33,6 @@ export interface BotConfig {
   openAiApiKey: string;
   openAiModel: string;
   systemPrompt: string;
-  pollIntervalMs: number;
   rcRequestIntervalMs: number;
   rcRetryBackoffMs: number;
   maxContextMessages: number;

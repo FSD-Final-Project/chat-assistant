@@ -164,6 +164,27 @@ export class RocketSyncService {
     });
   }
 
+  async findSubscriptionByRoomId(
+    appUserGoogleId: string,
+    roomId: string,
+  ): Promise<RocketSubscriptionDocument | null> {
+    return this.subscriptionModel.findOne({
+      appUserGoogleId,
+      roomId,
+    });
+  }
+
+  async listRecentMessages(
+    appUserGoogleId: string,
+    roomId: string,
+    limit: number,
+  ): Promise<RocketMessageDocument[]> {
+    return this.messageModel
+      .find({ appUserGoogleId, roomId })
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(limit);
+  }
+
   async updateSubscriptionPreferenceColor(
     appUserGoogleId: string,
     subscriptionId: string,

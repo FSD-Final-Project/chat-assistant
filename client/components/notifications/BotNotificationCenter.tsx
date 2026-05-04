@@ -231,6 +231,23 @@ export function BotNotificationCenter() {
                             />
                         </div>
 
+                        {notification.suggestedReply ? (
+                            <div className="mt-3 rounded-xl bg-primary/5 p-3">
+                                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                                    Suggested reply
+                                </p>
+                                <ExpandableText
+                                    text={
+                                        draftReplies[notification.id] ??
+                                        notification.suggestedReply ??
+                                        ""
+                                    }
+                                    expanded={Boolean(expandedSections[`${notification.id}:reply`])}
+                                    onToggle={() => toggleExpandedSection(`${notification.id}:reply`)}
+                                />
+                            </div>
+                        ) : null}
+
                         {notification.kind === "approval" && (
                             <div className="mt-3 space-y-3">
                                 {isEditing ? (
@@ -244,22 +261,7 @@ export function BotNotificationCenter() {
                                         }
                                         className="min-h-[96px] w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                                     />
-                                ) : (
-                                    <div className="rounded-xl bg-primary/5 p-3">
-                                        <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                                            Suggested reply
-                                        </p>
-                                        <ExpandableText
-                                            text={
-                                                draftReplies[notification.id] ??
-                                                notification.suggestedReply ??
-                                                ""
-                                            }
-                                            expanded={Boolean(expandedSections[`${notification.id}:reply`])}
-                                            onToggle={() => toggleExpandedSection(`${notification.id}:reply`)}
-                                        />
-                                    </div>
-                                )}
+                                ) : null}
 
                                 <div className="flex flex-wrap gap-2">
                                     <Button
@@ -339,7 +341,7 @@ function thisWindowNotification(notification: BotNotificationItem, onClick: () =
         notification.senderName ?? notification.senderUsername ?? "Rocket.Chat",
         {
             body:
-                notification.kind === "approval"
+                notification.suggestedReply
                     ? `${notification.incomingText}\nSuggested reply available`
                     : notification.incomingText,
             tag: notification.id,

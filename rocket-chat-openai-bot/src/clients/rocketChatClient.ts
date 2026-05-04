@@ -2,6 +2,7 @@ import type { BotConfig, RocketChatAuth } from "../types/bot.js";
 import type {
   RocketChatMessage,
   RocketChatMessagesResponse,
+  RocketChatPostMessageResponse,
 } from "../types/rocketchat.js";
 import { sleep } from "../utils/sleep.js";
 
@@ -45,14 +46,19 @@ export class RocketChatClient {
     return json.messages ?? [];
   }
 
-  async postMessage(roomId: string, text: string): Promise<void> {
-    await this.request("/api/v1/chat.postMessage", {
+  async postMessage(roomId: string, text: string): Promise<RocketChatMessage | null> {
+    const response = await this.request<RocketChatPostMessageResponse>(
+      "/api/v1/chat.postMessage",
+      {
       method: "POST",
       body: {
         roomId,
         text,
       },
-    });
+      }
+    );
+
+    return response.message ?? null;
   }
 
   private async request<T>(

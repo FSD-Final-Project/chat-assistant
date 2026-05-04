@@ -1,78 +1,65 @@
 import type { BotConfig, ManagedSubscription, RocketChatAuth } from "../types/bot.js";
 import type { RocketChatMessage } from "../types/rocketchat.js";
 import { RocketChatClient } from "../clients/rocketChatClient.js";
+import { RocketChatRealtimeClient } from "../clients/rocketChatRealtimeClient.js";
 import { BotState } from "../state/botState.js";
 import { sleep } from "../utils/sleep.js";
+import { BotContextStore } from "./botContextStore.js";
 import { BotNotificationStore } from "./botNotificationStore.js";
 import { ReplyService } from "./replyService.js";
 import { SubscriptionPreferenceStore } from "./subscriptionPreferenceStore.js";
 
 export class BotRunner {
   private readonly state = new BotState();
-  private readonly startedAt = new Date();
-  private readonly roomWatermarks = new Map<string, Date>();
 
   constructor(
     private readonly config: BotConfig,
     private readonly auth: RocketChatAuth,
     private readonly rocketChatClient: RocketChatClient,
+    private readonly rocketChatRealtimeClient: RocketChatRealtimeClient,
     private readonly replyService: ReplyService,
     private readonly subscriptionPreferenceStore: SubscriptionPreferenceStore,
-    private readonly botNotificationStore: BotNotificationStore
+    private readonly botNotificationStore: BotNotificationStore,
+    private readonly botContextStore: BotContextStore,
   ) {}
 
   async start(): Promise<void> {
-    this.initializeAuth();
-    console.log(`Starting poll loop (${this.config.pollIntervalMs} ms)`);
-    await this.runLoop();
-  }
-
-  private initializeAuth(): void {
     this.state.userId = this.rocketChatClient.currentUserId;
     console.log(
-      `Using Rocket.Chat token auth for '${this.rocketChatClient.identityLabel}' (userId=${this.state.userId})`
+      `Using Rocket.Chat token auth for '${this.rocketChatClient.identityLabel}' (userId=${this.state.userId})`,
     );
-  }
 
-  private async runLoop(): Promise<void> {
+    let subscriptions =
+      await this.subscriptionPreferenceStore.loadManagedSubscriptions(this.auth);
+    if (subscriptions.length === 0) {
+      console.log(
+        `[${this.rocketChatClient.identityLabel}] No managed subscriptions found. Realtime listener not started.`,
+      );
+      return;
+    }
+
     while (true) {
       try {
-        const subscriptions =
-          await this.subscriptionPreferenceStore.loadManagedSubscriptions(this.auth);
-        for (const subscription of subscriptions) {
-          await this.processSubscription(subscription);
-        }
+        await this.rocketChatRealtimeClient.run(subscriptions, async (subscription, message) => {
+          await this.processMessage(subscription, message);
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`Polling error: ${message}`);
+        console.error(
+          `[${this.rocketChatClient.identityLabel}] Realtime listener error: ${message}`,
+        );
       }
 
-      await sleep(this.config.pollIntervalMs);
-    }
-  }
-
-  private async processSubscription(subscription: ManagedSubscription): Promise<void> {
-    const oldest = this.roomWatermarks.get(subscription.roomId) ?? this.startedAt;
-    const messages = await this.rocketChatClient.getRoomMessages(
-      subscription.roomId,
-      subscription.roomType,
-      oldest
-    );
-
-    for (const message of messages) {
-      await this.processMessage(subscription, message);
-      const timestamp = this.getMessageDate(message);
-      if (timestamp) {
-        this.roomWatermarks.set(subscription.roomId, timestamp);
-      }
+      subscriptions = await this.subscriptionPreferenceStore.loadManagedSubscriptions(this.auth);
+      await sleep(this.config.rcRetryBackoffMs);
     }
   }
 
   private async processMessage(
     subscription: ManagedSubscription,
-    message: RocketChatMessage
+    message: RocketChatMessage,
   ): Promise<void> {
-    if (!message._id) {
+    if (!message._id || this.state.isProcessed(message._id)) {
       return;
     }
 
@@ -82,35 +69,36 @@ export class BotRunner {
     }
 
     try {
-      const userText = (message.msg ?? "").trim();
-      const senderName = message.u?.username ?? message.u?._id ?? subscription.roomId;
-      console.log(
-        `[${subscription.roomId}] ${subscription.preferenceColor.toUpperCase()} User: ${userText}`
+      const contextPayload = await this.botContextStore.loadContextForMessage(
+        this.auth,
+        subscription.roomId,
+        subscription.roomType,
+        subscription.id,
+        message,
       );
 
-      if (subscription.preferenceColor === "green") {
-        const reply = await this.replyService.generateReply(subscription.roomId, userText);
-        await this.rocketChatClient.postMessage(subscription.roomId, reply);
-        console.log(`[${subscription.roomId}] Bot: ${reply}`);
-      } else if (subscription.preferenceColor === "yellow") {
-        const suggestedReply = await this.replyService.generateReply(
-          subscription.roomId,
-          userText,
-          { commitToContext: false }
-        );
-        await this.botNotificationStore.createNotification({
-          auth: this.auth,
-          roomId: subscription.roomId,
-          roomType: subscription.roomType,
-          subscriptionId: subscription.id,
-          messageId: message._id,
-          preferenceColor: subscription.preferenceColor,
-          kind: "approval",
-          senderName,
-          senderUsername: message.u?.username,
-          incomingText: userText,
-          suggestedReply,
-        });
+      const incomingText = (message.msg ?? "").trim();
+      const senderName = message.u?.username ?? message.u?._id ?? subscription.roomId;
+      console.log(
+        `[${subscription.roomId}] ${contextPayload.subscription.preferenceColor.toUpperCase()} User: ${incomingText}`,
+      );
+
+      const suggestedReply = await this.replyService.generateReply(
+        incomingText,
+        contextPayload.context,
+      );
+
+      if (contextPayload.subscription.preferenceColor === "green") {
+        const postedMessage = await this.rocketChatClient.postMessage(subscription.roomId, suggestedReply);
+        if (postedMessage) {
+          await this.subscriptionPreferenceStore.syncOutgoingMessage(
+            this.auth,
+            subscription.roomId,
+            subscription.roomType,
+            postedMessage,
+          );
+        }
+        console.log(`[${subscription.roomId}] Bot: ${suggestedReply}`);
       } else {
         await this.botNotificationStore.createNotification({
           auth: this.auth,
@@ -118,11 +106,13 @@ export class BotRunner {
           roomType: subscription.roomType,
           subscriptionId: subscription.id,
           messageId: message._id,
-          preferenceColor: subscription.preferenceColor,
-          kind: "info",
+          preferenceColor: contextPayload.subscription.preferenceColor,
+          kind:
+            contextPayload.subscription.preferenceColor === "yellow" ? "approval" : "info",
           senderName,
           senderUsername: message.u?.username,
-          incomingText: userText,
+          incomingText,
+          suggestedReply,
         });
       }
     } catch (error) {
@@ -131,7 +121,7 @@ export class BotRunner {
       if (subscription.preferenceColor === "green") {
         await this.rocketChatClient.postMessage(
           subscription.roomId,
-          "I hit an internal error while generating a reply. Please try again."
+          "I hit an internal error while generating a reply. Please try again.",
         );
       }
     } finally {
@@ -141,7 +131,6 @@ export class BotRunner {
 
   private shouldRespondToMessage(message: RocketChatMessage): boolean {
     if (!message._id) return false;
-    if (this.state.isProcessed(message._id)) return false;
     if (message.u?._id === this.state.userId) return false;
     if (typeof message.msg !== "string") return false;
 
@@ -153,22 +142,5 @@ export class BotRunner {
     }
 
     return true;
-  }
-
-  private getMessageDate(message: RocketChatMessage): Date | null {
-    if (!message.ts) {
-      return null;
-    }
-
-    if (typeof message.ts === "string") {
-      const parsed = new Date(message.ts);
-      return Number.isNaN(parsed.getTime()) ? null : parsed;
-    }
-
-    if (typeof message.ts.$date === "number") {
-      return new Date(message.ts.$date);
-    }
-
-    return null;
   }
 }
