@@ -10,8 +10,14 @@ import {
   RocketSubscriptionRecord,
   RocketSubscriptionSchema,
 } from "./schemas/rocket-subscription.schema";
+import {
+  MessageChunkRecord,
+  MessageChunkSchema,
+} from "./schemas/message-chunk.schema";
 import { RocketSyncService } from "./rocket-sync.service";
 import { UsersService } from "./users.service";
+import { EmbeddingService } from "./embedding.service";
+import { ChunkProcessorService } from "./chunk-processor.service";
 
 @Module({
   imports: [
@@ -19,10 +25,11 @@ import { UsersService } from "./users.service";
       { name: User.name, schema: UserSchema },
       { name: RocketSubscriptionRecord.name, schema: RocketSubscriptionSchema },
       { name: RocketMessageRecord.name, schema: RocketMessageSchema },
+      { name: MessageChunkRecord.name, schema: MessageChunkSchema },
     ]),
   ],
   controllers: [UsersController],
-  providers: [UsersService, RocketSyncService],
-  exports: [UsersService, RocketSyncService],
+  providers: [UsersService, RocketSyncService, EmbeddingService, ChunkProcessorService],
+  exports: [UsersService, RocketSyncService, EmbeddingService],
 })
 export class UsersModule {}

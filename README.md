@@ -13,7 +13,6 @@ Chat Assistant is a full-stack workspace with:
 - `server/`: NestJS backend for Google OAuth and session auth
 - `user-data-worker/`: NestJS worker for Rocket.Chat data syncing
 - `rocket-chat-openai-bot/`: Rocket.Chat bot service
-- `rocketchat-compose/`: local Rocket.Chat docker setup
 
 ## Prerequisites
 
@@ -42,7 +41,6 @@ Available scripts:
 - `npm run build` - build the Vite client
 - `npm run build:server` - build the Nest server
 - `npm run build:worker` - build the Nest worker
-- `npm run rocket` - start the local Rocket.Chat stack from `rocketchat-compose`
 
 `npm run dev:all` uses `concurrently`, so make sure root dependencies are installed first.
 
