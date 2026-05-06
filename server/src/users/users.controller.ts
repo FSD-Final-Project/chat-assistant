@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import type { SessionUser } from "../auth/session-user";
 import { RocketSyncService } from "./rocket-sync.service";
 import { UsersService } from "./users.service";
+import { EmbeddingService } from "./embedding.service";
 import type { RocketPreferenceColor } from "./schemas/rocket-subscription.schema";
 
 interface RocketIntegrationBody {
@@ -45,6 +46,7 @@ export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly rocketSyncService: RocketSyncService,
+    private readonly embeddingService: EmbeddingService,
   ) {}
 
   private isInternalRequestAuthorized(request: Request): boolean {
@@ -412,5 +414,37 @@ export class UsersController {
     }
 
     response.status(200).send(buffer);
+  }
+
+  @Post("me/rocket-rooms/:roomId/auto-reply-suggestion")
+  async getAutoReplySuggestion(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: { messageText: string },
+  ) {
+    const sessionUser = request.user as SessionUser | undefined;
+    if (!request.isAuthenticated() || !sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const roomId = request.params.roomId as string;
+    const messageText = body.messageText?.trim();
+
+    if (!roomId || !messageText) {
+      response.status(400).json({ message: "roomId and messageText are required" });
+      return;
+    }
+
+    try {
+      const suggestion = await this.embeddingService.getAutoReplySuggestion(
+        sessionUser.id,
+        roomId,
+        messageText,
+      );
+      response.status(200).json({ suggestion });
+    } catch (error) {
+      response.status(500).json({ message: "Failed to generate auto-reply suggestion" });
+    }
   }
 }

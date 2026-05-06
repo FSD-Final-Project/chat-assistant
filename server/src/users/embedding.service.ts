@@ -25,14 +25,38 @@ export class EmbeddingService {
     private readonly messageModel: Model<RocketMessageDocument>,
   ) {
     this.openai = new OpenAI({
-      apiKey: this.configService.get<string>("OPENAI_API_KEY"),
+      apiKey: this.openaiApiKey,
     });
+  }
+
+  private get openaiApiKey(): string {
+    const value = this.configService.get<string>("OPENAI_API_KEY");
+    if (!value) {
+      throw new Error("Missing OPENAI_API_KEY in configuration");
+    }
+    return value;
+  }
+
+  private get openaiModel(): string {
+    const value = this.configService.get<string>("OPENAI_MODEL");
+    if (!value) {
+      throw new Error("Missing OPENAI_MODEL in configuration");
+    }
+    return value;
+  }
+
+  private get embeddingModel(): string {
+    const value = this.configService.get<string>("EMBEDDING_MODEL");
+    if (!value) {
+      throw new Error("Missing EMBEDDING_MODEL in configuration");
+    }
+    return value;
   }
 
   async generateEmbedding(text: string): Promise<number[]> {
     try {
       const response = await this.openai.embeddings.create({
-        model: "text-embedding-3-small",
+        model: this.embeddingModel,
         input: text,
         encoding_format: "float",
       });
@@ -248,5 +272,72 @@ export class EmbeddingService {
         this.logger.error(`Failed to process embedding for chunk ${chunk._id}: ${error}`);
       }
     }
+  }
+
+  /**
+   * Generates an auto-reply suggestion using hybrid retrieval (Vector Search + Recent Context)
+   */
+  async getAutoReplySuggestion(
+    appUserGoogleId: string,
+    roomId: string,
+    messageText: string,
+  ): Promise<string> {
+    // 1. Generate embedding for the input message
+    const queryVector = await this.generateEmbedding(messageText);
+
+    // 2. Perform Hybrid Retrieval Query
+    const last5Minutes = new Date(Date.now() - 5 * 60 * 1000);
+
+    const relevantChunks = await this.chunkModel.aggregate([
+      {
+        $vectorSearch: {
+          index: "vector_index",
+          path: "embedding",
+          queryVector: queryVector,
+          numCandidates: 100,
+          limit: 5,
+          filter: { appUserGoogleId },
+        },
+      },
+      {
+        $unionWith: {
+          coll: "messagechunkrecords",
+          pipeline: [
+            {
+              $match: {
+                appUserGoogleId,
+                roomId,
+                startTime: { $gte: last5Minutes },
+              },
+            },
+          ],
+        },
+      },
+    ]);
+
+    // 3. Format context for LLM
+    const contextText = relevantChunks
+      .map((chunk) => this.formatChunkForEmbedding(chunk.messages))
+      .join("\n---\n");
+
+    // 4. Call OpenAI Chat Completion
+    const completion = await this.openai.chat.completions.create({
+      model: this.openaiModel,
+      messages: [
+        {
+          role: "system",
+          content: `You are an AI assistant helping a user reply to messages in Rocket.Chat. 
+Use the following context from previous conversations to suggest a natural, helpful reply.
+Context:
+${contextText}`,
+        },
+        {
+          role: "user",
+          content: `Suggest a reply for this message: "${messageText}"`,
+        },
+      ],
+    });
+
+    return completion.choices[0].message.content ?? "Sorry, I couldn't generate a suggestion.";
   }
 }
