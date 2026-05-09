@@ -20,14 +20,17 @@ export class ChunkProcessorService {
     try {
       this.logger.debug("Starting chunk processing tick...");
 
-      // 1. Group new messages into chunks
+      this.logger.debug("1. Grouping new messages into chunks...");
       await this.embeddingService.chunkMessages();
+      this.logger.debug("1. Completed message chunking.");
 
-      // 2. Close chunks that have "cooled down"
+      this.logger.debug("2. Closing cold chunks...");
       await this.embeddingService.closeColdChunks();
+      this.logger.debug("2. Completed closing cold chunks.");
 
-      // 3. Generate embeddings for closed chunks
+      this.logger.debug("3. Processing pending embeddings...");
       await this.embeddingService.processPendingEmbeddings();
+      this.logger.debug("3. Completed processing pending embeddings.");
 
       this.logger.debug("Chunk processing tick completed.");
     } catch (error) {

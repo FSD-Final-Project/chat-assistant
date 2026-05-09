@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import OpenAI from "openai";
+import { isRealMessage } from "../../../common/message-utils";
 import {
   MessageChunkRecord,
   MessageChunkDocument,
@@ -110,6 +111,7 @@ export class EmbeddingService {
       .limit(500);
 
     if (unchunkedMessages.length === 0) {
+      this.logger.debug("No unchunked messages found.");
       return;
     }
 
@@ -119,10 +121,24 @@ export class EmbeddingService {
       const payload = message.payload as any;
       const tmid = payload.tmid;
       const roomId = message.roomId;
-      const appUserGoogleId = message.appUserGoogleId;
+      // Filter system and empty messages using shared logic
+      if (!isRealMessage(payload)) {
+        this.logger.debug(`Skipping non-real message ${message._id} (type: ${payload.t ?? 'none'})`);
+        message.isChunked = true;
+        await message.save();
+        continue;
+      }
+
       const timestamp = new Date(payload.ts?.$date ?? payload.ts);
-      const text = payload.msg ?? "";
+      const text = (payload.msg ?? "").trim();
       const user = payload.u?.username ?? "unknown";
+
+      if (isNaN(timestamp.getTime())) {
+        this.logger.warn(`Skipping message ${message._id} due to invalid timestamp`);
+        message.isChunked = true;
+        await message.save();
+        continue;
+      }
 
       if (tmid) {
         // Threaded logic: Group by thread ID
@@ -161,6 +177,7 @@ export class EmbeddingService {
     });
 
     if (!chunk) {
+      this.logger.debug(`Creating new thread chunk for roomId: ${roomId}, tmid: ${tmid}`);
       chunk = new this.chunkModel({
         appUserGoogleId,
         roomId,
@@ -171,6 +188,7 @@ export class EmbeddingService {
         isClosed: false,
       });
     } else {
+      this.logger.debug(`Appending to existing thread chunk for roomId: ${roomId}, tmid: ${tmid}`);
       chunk.messages.push(message);
       chunk.endTime = message.timestamp;
     }
@@ -199,6 +217,7 @@ export class EmbeddingService {
       const timeDiff = message.timestamp.getTime() - chunk.endTime.getTime();
       if (timeDiff > FIVE_MINUTES_MS) {
         // Gap too large, close this chunk and create a new one
+        this.logger.debug(`Closing time gap chunk for roomId: ${roomId} due to time gap (${timeDiff}ms)`);
         chunk.isClosed = true;
         await chunk.save();
         chunk = null;
@@ -206,6 +225,7 @@ export class EmbeddingService {
     }
 
     if (!chunk) {
+      this.logger.debug(`Creating new time gap chunk for roomId: ${roomId}`);
       chunk = new this.chunkModel({
         appUserGoogleId,
         roomId,
@@ -215,6 +235,7 @@ export class EmbeddingService {
         isClosed: false,
       });
     } else {
+      this.logger.debug(`Appending to existing time gap chunk for roomId: ${roomId}`);
       chunk.messages.push(message);
       chunk.endTime = message.timestamp;
     }
@@ -253,6 +274,10 @@ export class EmbeddingService {
         embedding: { $exists: false },
       })
       .limit(10);
+
+    if (pendingChunks.length > 0) {
+      this.logger.log(`Found ${pendingChunks.length} chunks pending embedding generation`);
+    }
 
     for (const chunk of pendingChunks) {
       const text = this.formatChunkForEmbedding(chunk.messages);

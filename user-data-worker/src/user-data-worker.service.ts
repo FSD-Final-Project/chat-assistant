@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { isRealMessage } from "../../common/message-utils";
 
 interface RocketIntegrationIdentity {
   googleId: string;
@@ -59,6 +60,7 @@ export class UserDataWorkerService {
     );
 
     const subscriptions = subscriptionsResponse.update ?? [];
+    this.logger.log(`[${integration.email}] Fetched ${subscriptions.length} subscriptions`);
     if (subscriptions.length === 0) {
       return;
     }
@@ -107,22 +109,29 @@ export class UserDataWorkerService {
         `${endpoint}?${params.toString()}`,
       );
 
-      const messages = history.messages ?? [];
-      if (messages.length === 0) {
+      const allMessages = history.messages ?? [];
+      const messages = allMessages.filter(isRealMessage);
+
+      this.logger.log(`[${integration.email}] Fetched ${allMessages.length} messages, ${messages.length} remaining after filtering system/empty messages.`);
+      
+      if (allMessages.length === 0) {
         break;
       }
 
-      for (const batch of this.chunkItems(messages, this.mainServerBatchSize)) {
-        await this.postToMainServer("/users/internal/rocket-sync/messages", {
-          googleId: integration.googleId,
-          email: integration.email,
-          roomId,
-          roomType,
-          messages: batch,
-        });
+      if (messages.length > 0) {
+        for (const batch of this.chunkItems(messages, this.mainServerBatchSize)) {
+          this.logger.log(`[${integration.email}] Posting batch of ${batch.length} messages to main server for roomId: ${roomId}`);
+          await this.postToMainServer("/users/internal/rocket-sync/messages", {
+            googleId: integration.googleId,
+            email: integration.email,
+            roomId,
+            roomType,
+            messages: batch,
+          });
+        }
       }
 
-      const lastTimestamp = this.getMessageDate(messages[messages.length - 1]);
+      const lastTimestamp = this.getMessageDate(allMessages[allMessages.length - 1]);
       if (!lastTimestamp) {
         break;
       }
@@ -130,7 +139,7 @@ export class UserDataWorkerService {
       this.setRoomWatermark(integration.googleId, roomId, lastTimestamp);
       oldest = lastTimestamp;
 
-      if (messages.length < 100) {
+      if (allMessages.length < 100) {
         break;
       }
     }
