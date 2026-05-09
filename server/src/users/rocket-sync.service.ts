@@ -137,4 +137,15 @@ export class RocketSyncService {
       { new: true },
     );
   }
+
+  async findMessagesByRoomId(
+    appUserGoogleId: string,
+    roomId: string,
+    limit: number = 50,
+  ): Promise<RocketMessageDocument[]> {
+    return this.messageModel
+      .find({ appUserGoogleId, roomId })
+      .sort({ "payload.ts": -1 })
+      .limit(limit);
+  }
 }

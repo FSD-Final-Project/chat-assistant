@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, Req, Res } from "@nestjs/common";
+import { Body, Controller, Get, Logger, Post, Query, Req, Res } from "@nestjs/common";
 import type { Request, Response } from "express";
 import type { SessionUser } from "../auth/session-user";
 import { RocketSyncService } from "./rocket-sync.service";
@@ -43,11 +43,12 @@ interface UpdateRocketSubscriptionPreferenceColorBody {
 
 @Controller("users")
 export class UsersController {
+  private readonly logger = new Logger(UsersController.name);
   constructor(
     private readonly usersService: UsersService,
     private readonly rocketSyncService: RocketSyncService,
     private readonly embeddingService: EmbeddingService,
-  ) {}
+  ) { }
 
   private isInternalRequestAuthorized(request: Request): boolean {
     const internalApiKey = process.env.INTERNAL_API_KEY;
@@ -105,28 +106,34 @@ export class UsersController {
         response.status(401).json({ message: "Unauthorized" });
         return;
       }
-    } catch (error) {
+    } catch (error: any) {
+      this.logger.error(`Auth authorization failed: ${error.message}`, error.stack);
       response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
       return;
     }
 
-    const users = await this.usersService.findAllWithRocketIntegration();
-    response.status(200).json(
-      users
-        .map((user) => {
-          const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
-          if (!rocketAuth) {
-            return null;
-          }
+    try {
+      const users = await this.usersService.findAllWithRocketIntegration();
+      response.status(200).json(
+        users
+          .map((user) => {
+            const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
+            if (!rocketAuth) {
+              return null;
+            }
 
-          return {
-            googleId: user.googleId,
-            email: user.email,
-            ...rocketAuth,
-          };
-        })
-        .filter(Boolean),
-    );
+            return {
+              googleId: user.googleId,
+              email: user.email,
+              ...rocketAuth,
+            };
+          })
+          .filter(Boolean),
+      );
+    } catch (error: any) {
+      this.logger.error(`Failed to get all internal rocket auth: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Failed to get all internal rocket auth" });
+    }
   }
 
   @Get("internal/rocket-auth")
@@ -140,7 +147,8 @@ export class UsersController {
         response.status(401).json({ message: "Unauthorized" });
         return;
       }
-    } catch (error) {
+    } catch (error: any) {
+      this.logger.error(`Internal auth authorization failed: ${error.message}`, error.stack);
       response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
       return;
     }
@@ -151,19 +159,24 @@ export class UsersController {
       return;
     }
 
-    const user = await this.usersService.findByEmail(normalizedEmail);
-    if (!user) {
-      response.status(404).json({ message: "User not found" });
-      return;
-    }
+    try {
+      const user = await this.usersService.findByEmail(normalizedEmail);
+      if (!user) {
+        response.status(404).json({ message: "User not found" });
+        return;
+      }
 
-    const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
-    if (!rocketAuth) {
-      response.status(404).json({ message: "Rocket.Chat credentials not found for user" });
-      return;
-    }
+      const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
+      if (!rocketAuth) {
+        response.status(404).json({ message: "Rocket.Chat credentials not found for user" });
+        return;
+      }
 
-    response.status(200).json(rocketAuth);
+      response.status(200).json(rocketAuth);
+    } catch (error: any) {
+      this.logger.error(`Failed to get internal rocket auth for ${normalizedEmail}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
   }
 
   @Post("internal/rocket-sync/subscriptions")
@@ -177,7 +190,8 @@ export class UsersController {
         response.status(401).json({ message: "Unauthorized" });
         return;
       }
-    } catch (error) {
+    } catch (error: any) {
+      this.logger.error(`Sync subscriptions authorization failed: ${error.message}`, error.stack);
       response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
       return;
     }
@@ -191,8 +205,13 @@ export class UsersController {
       return;
     }
 
-    await this.rocketSyncService.upsertSubscriptions(googleId, email, subscriptions);
-    response.status(200).json({ success: true, count: subscriptions.length });
+    try {
+      await this.rocketSyncService.upsertSubscriptions(googleId, email, subscriptions);
+      response.status(200).json({ success: true, count: subscriptions.length });
+    } catch (error: any) {
+      this.logger.error(`Failed to sync subscriptions for ${email}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
   }
 
   @Post("internal/rocket-sync/messages")
@@ -206,7 +225,8 @@ export class UsersController {
         response.status(401).json({ message: "Unauthorized" });
         return;
       }
-    } catch (error) {
+    } catch (error: any) {
+      this.logger.error(`Sync messages authorization failed: ${error.message}`, error.stack);
       response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
       return;
     }
@@ -222,8 +242,13 @@ export class UsersController {
       return;
     }
 
-    await this.rocketSyncService.upsertMessages(googleId, email, roomId, roomType, messages);
-    response.status(200).json({ success: true, count: messages.length });
+    try {
+      await this.rocketSyncService.upsertMessages(googleId, email, roomId, roomType, messages);
+      response.status(200).json({ success: true, count: messages.length });
+    } catch (error: any) {
+      this.logger.error(`Failed to sync messages for ${email} in room ${roomId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
   }
 
   @Post("me/rocket-integration")
@@ -246,29 +271,34 @@ export class UsersController {
       return;
     }
 
-    const user = await this.usersService.saveRocketIntegration(
-      sessionUser.id,
-      rocketUserToken,
-      rocketUserId,
-    );
+    try {
+      const user = await this.usersService.saveRocketIntegration(
+        sessionUser.id,
+        rocketUserToken,
+        rocketUserId,
+      );
 
-    if (!user) {
-      response.status(404).json({ message: "User not found" });
-      return;
+      if (!user) {
+        response.status(404).json({ message: "User not found" });
+        return;
+      }
+
+      response.status(200).json({
+        success: true,
+        user: {
+          id: user.googleId,
+          email: user.email,
+          name: user.name,
+          givenName: user.givenName,
+          familyName: user.familyName,
+          picture: user.picture,
+          hasRocketIntegration: this.usersService.hasRocketIntegration(user),
+        },
+      });
+    } catch (error: any) {
+      this.logger.error(`Failed to save rocket integration for user ${sessionUser.id}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
     }
-
-    response.status(200).json({
-      success: true,
-      user: {
-        id: user.googleId,
-        email: user.email,
-        name: user.name,
-        givenName: user.givenName,
-        familyName: user.familyName,
-        picture: user.picture,
-        hasRocketIntegration: this.usersService.hasRocketIntegration(user),
-      },
-    });
   }
 
   @Get("me/rocket-subscriptions")
@@ -279,17 +309,22 @@ export class UsersController {
       return;
     }
 
-    const subscriptions = await this.rocketSyncService.listSubscriptions(sessionUser.id);
-    response.status(200).json({
-      subscriptions: subscriptions.map((subscription) => ({
-        id: subscription.subscriptionId,
-        roomId: subscription.roomId,
-        roomType: subscription.roomType,
-        preferenceColor: subscription.preferenceColor,
-        payload: subscription.payload,
-        avatarUrl: `/users/me/rocket-subscriptions/${encodeURIComponent(subscription.subscriptionId)}/avatar`,
-      })),
-    });
+    try {
+      const subscriptions = await this.rocketSyncService.listSubscriptions(sessionUser.id);
+      response.status(200).json({
+        subscriptions: subscriptions.map((subscription) => ({
+          id: subscription.subscriptionId,
+          roomId: subscription.roomId,
+          roomType: subscription.roomType,
+          preferenceColor: subscription.preferenceColor,
+          payload: subscription.payload,
+          avatarUrl: `/users/me/rocket-subscriptions/${encodeURIComponent(subscription.subscriptionId)}/avatar`,
+        })),
+      });
+    } catch (error: any) {
+      this.logger.error(`Failed to list subscriptions for user ${sessionUser.id}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
   }
 
   @Post("me/rocket-subscriptions/:subscriptionId/preference-color")
@@ -443,8 +478,35 @@ export class UsersController {
         messageText,
       );
       response.status(200).json({ suggestion });
-    } catch (error) {
+    } catch (error: any) {
+      this.logger.error(`Failed to generate auto-reply suggestion for user ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
       response.status(500).json({ message: "Failed to generate auto-reply suggestion" });
+    }
+  }
+
+  @Get("me/rocket-rooms/:roomId/messages")
+  async getRoomMessages(
+    @Req() request: Request,
+    @Res() response: Response,
+  ) {
+    const sessionUser = request.user as SessionUser | undefined;
+    if (!request.isAuthenticated() || !sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const roomId = request.params.roomId as string;
+    if (!roomId) {
+      response.status(400).json({ message: "roomId is required" });
+      return;
+    }
+
+    try {
+      const messages = await this.rocketSyncService.findMessagesByRoomId(sessionUser.id, roomId);
+      response.status(200).json({ messages });
+    } catch (error: any) {
+      this.logger.error(`Failed to fetch room messages for user ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Failed to fetch room messages" });
     }
   }
 }

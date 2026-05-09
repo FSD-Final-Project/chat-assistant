@@ -76,20 +76,25 @@ export class EmbeddingService {
     queryVector: number[],
     limit: number = 5,
   ): Promise<MessageChunkDocument[]> {
-    return this.chunkModel.aggregate([
-      {
-        $vectorSearch: {
-          index: "vector_index", // This must match the index name in Atlas
-          path: "embedding",
-          queryVector: queryVector,
-          numCandidates: 100,
-          limit: limit,
-          filter: {
-            appUserGoogleId: appUserGoogleId,
+    try {
+      return await this.chunkModel.aggregate([
+        {
+          $vectorSearch: {
+            index: "vector_index", // This must match the index name in Atlas
+            path: "embedding",
+            queryVector: queryVector,
+            numCandidates: 100,
+            limit: limit,
+            filter: {
+              appUserGoogleId: appUserGoogleId,
+            },
           },
         },
-      },
-    ]);
+      ]);
+    } catch (error: any) {
+      this.logger.warn(`Vector search failed: ${error.message}`);
+      return [];
+    }
   }
 
   /**
@@ -143,7 +148,7 @@ export class EmbeddingService {
       if (tmid) {
         // Threaded logic: Group by thread ID
         await this.appendToThreadChunk(
-          appUserGoogleId,
+          message.appUserGoogleId,
           roomId,
           tmid,
           { text, user, timestamp },
@@ -151,7 +156,7 @@ export class EmbeddingService {
       } else {
         // Unthreaded logic: Group by time gap
         await this.appendToTimeGapChunk(
-          appUserGoogleId,
+          message.appUserGoogleId,
           roomId,
           { text, user, timestamp },
         );
@@ -310,35 +315,34 @@ export class EmbeddingService {
     // 1. Generate embedding for the input message
     const queryVector = await this.generateEmbedding(messageText);
 
-    // 2. Perform Hybrid Retrieval Query
+    // 2. Perform Hybrid Retrieval Query (Separated for local MongoDB compatibility)
     const last5Minutes = new Date(Date.now() - 5 * 60 * 1000);
 
-    const relevantChunks = await this.chunkModel.aggregate([
-      {
-        $vectorSearch: {
-          index: "vector_index",
-          path: "embedding",
-          queryVector: queryVector,
-          numCandidates: 100,
-          limit: 5,
-          filter: { appUserGoogleId },
+    let vectorResults: any[] = [];
+    try {
+      vectorResults = await this.chunkModel.aggregate([
+        {
+          $vectorSearch: {
+            index: "vector_index",
+            path: "embedding",
+            queryVector: queryVector,
+            numCandidates: 100,
+            limit: 5,
+            filter: { appUserGoogleId },
+          },
         },
-      },
-      {
-        $unionWith: {
-          coll: "messagechunkrecords",
-          pipeline: [
-            {
-              $match: {
-                appUserGoogleId,
-                roomId,
-                startTime: { $gte: last5Minutes },
-              },
-            },
-          ],
-        },
-      },
-    ]);
+      ]);
+    } catch (error: any) {
+      this.logger.warn(`Vector search failed (likely not on Atlas): ${error.message}. Falling back to recent context only.`);
+    }
+
+    const recentResults = await this.chunkModel.find({
+      appUserGoogleId,
+      roomId,
+      startTime: { $gte: last5Minutes },
+    });
+
+    const relevantChunks = [...vectorResults, ...recentResults];
 
     // 3. Format context for LLM
     const contextText = relevantChunks

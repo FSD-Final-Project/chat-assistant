@@ -6,7 +6,7 @@
   "license": "ISC",
   "scripts": {
     "build": "nest build",
-    "start": "node dist/main.js",
+    "start": "node dist/server/src/main.js",
     "start:dev": "nest start --watch"
   },
   "dependencies": {
