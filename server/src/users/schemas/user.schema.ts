@@ -11,6 +11,18 @@ export class RocketIntegration {
   @Prop()
   encryptedUserId?: string;
 
+  @Prop({ enum: ["pending", "syncing", "completed", "failed"], default: "pending" })
+  syncStatus?: "pending" | "syncing" | "completed" | "failed";
+
+  @Prop()
+  syncStartedAt?: Date;
+
+  @Prop()
+  syncCompletedAt?: Date;
+
+  @Prop()
+  syncError?: string;
+
   @Prop()
   updatedAt?: Date;
 }

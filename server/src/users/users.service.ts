@@ -20,6 +20,8 @@ interface LocalUserInput {
   passwordHash: string;
 }
 
+type RocketSyncStatus = "pending" | "syncing" | "completed" | "failed";
+
 @Injectable()
 export class UsersService {
   constructor(@InjectModel(User.name) private readonly userModel: Model<UserDocument>) {}
@@ -91,9 +93,37 @@ export class UsersService {
           rocketIntegration: {
             encryptedUserToken: this.encrypt(rocketUserToken),
             encryptedUserId: this.encrypt(rocketUserId),
+            syncStatus: "pending",
+            syncStartedAt: undefined,
+            syncCompletedAt: undefined,
+            syncError: undefined,
             updatedAt: new Date(),
           },
         },
+      },
+      { new: true },
+    );
+  }
+
+  async updateRocketSyncStatus(
+    googleId: string,
+    status: RocketSyncStatus,
+    error?: string,
+  ): Promise<UserDocument | null> {
+    const now = new Date();
+    return this.userModel.findOneAndUpdate(
+      { googleId },
+      {
+        $set: {
+          "rocketIntegration.syncStatus": status,
+          "rocketIntegration.updatedAt": now,
+          ...(status === "syncing" ? { "rocketIntegration.syncStartedAt": now } : {}),
+          ...(status === "completed" ? { "rocketIntegration.syncCompletedAt": now } : {}),
+          ...(status === "failed" && error ? { "rocketIntegration.syncError": error } : {}),
+        },
+        ...(status === "syncing" || status === "completed"
+          ? { $unset: { "rocketIntegration.syncError": "" } }
+          : {}),
       },
       { new: true },
     );
@@ -135,7 +165,7 @@ export class UsersService {
           "rocketIntegration.updatedAt": new Date(),
         },
       },
-      { new: true }
+      { new: true },
     );
   }
 

@@ -30,8 +30,8 @@ async function bootstrap(): Promise<void> {
       botNotificationStore,
       botContextStore,
       async () => {
-      await credentialsStore.disconnectRocketChatAuth(rocketChatAuth);
-    }
+        await credentialsStore.disconnectRocketChatAuth(rocketChatAuth);
+      },
     );
   });
 

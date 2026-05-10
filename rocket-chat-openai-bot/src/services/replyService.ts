@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 
-import type { BotConfig, ContextEntry } from "../types/bot.js";
+import type { BotConfig, ContextEntry, SummaryContextItem } from "../types/bot.js";
 
 function isTodoListMessage(text: string): boolean {
   const normalized = text.toLowerCase();
@@ -19,22 +19,42 @@ function isTodoListMessage(text: string): boolean {
   return hasTodoKeyword || listItemCount >= 2;
 }
 
-function buildStyleMirrorInstruction(userSamples: string[]): string {
-  if (userSamples.length === 0) {
-    return "Match the user's writing style, but keep answers clear and concise.";
+function buildSummaryContextBlock(
+  currentSummary: SummaryContextItem | null,
+  relevantSummaries: SummaryContextItem[],
+): string {
+  const sections: string[] = [];
+
+  if (currentSummary?.summary) {
+    sections.push(`Current conversation summary:\n${currentSummary.summary}`);
   }
 
-  const examples = userSamples
-    .map((sample, index) => `${index + 1}. ${sample}`)
-    .join("\n");
+  if (relevantSummaries.length > 0) {
+    sections.push(
+      [
+        "Related conversation summaries:",
+        ...relevantSummaries.map((summary, index) =>
+          `${index + 1}. [room ${summary.roomId}] ${summary.summary}`,
+        ),
+      ].join("\n"),
+    );
+  }
 
-  return [
-    "Mirror the user's writing style based on these recent messages.",
-    "Keep the same tone, level of formality, punctuation habit, and response length preference.",
-    "Do not mention being an AI, assistant, or bot.",
-    "Recent user examples:",
-    examples,
-  ].join("\n");
+  return sections.join("\n\n").trim();
+}
+
+function cleanSummaryText(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .filter(
+      (line) =>
+        !/^(the )?(rocket\.chat )?(conversation|chat) (shows|is about|focuses on)\b/i.test(line) &&
+        !/^the user (discusses|talks about|mentions)\b/i.test(line)
+    )
+    .join("\n")
+    .trim();
 }
 
 export class ReplyService {
@@ -46,7 +66,8 @@ export class ReplyService {
 
   async generateReply(
     incomingText: string,
-    context: ContextEntry[]
+    currentSummary: SummaryContextItem | null,
+    relevantSummaries: SummaryContextItem[]
   ): Promise<string> {
     const userText = this.config.botTriggerPrefix
       ? incomingText.trim().slice(this.config.botTriggerPrefix.length).trim()
@@ -56,12 +77,7 @@ export class ReplyService {
       return "noted";
     }
 
-    const styleMessages = this.config.mirrorUserStyle
-      ? context
-          .filter((entry) => entry.role === "user")
-          .slice(-this.config.mirrorStyleSampleSize)
-          .map((entry) => entry.text)
-      : [];
+    const summaryContext = buildSummaryContextBlock(currentSummary, relevantSummaries);
 
     const input = [
       { role: "system" as const, content: this.config.systemPrompt },
@@ -74,10 +90,14 @@ export class ReplyService {
             },
           ]
         : []),
-      ...(this.config.mirrorUserStyle
-        ? [{ role: "system" as const, content: buildStyleMirrorInstruction(styleMessages) }]
+      ...(summaryContext
+        ? [
+            {
+              role: "system" as const,
+              content: `Use these stored conversation summaries as context.\n\n${summaryContext}`,
+            },
+          ]
         : []),
-      ...context.map((entry) => ({ role: entry.role, content: entry.text })),
       { role: "user" as const, content: userText },
     ];
 
@@ -92,5 +112,57 @@ export class ReplyService {
     }
 
     return output;
+  }
+
+  async reviseSummary(input: {
+    currentSummary?: string | null;
+    incomingText: string;
+    assistantReply?: string;
+  }): Promise<string> {
+    const prompt = [
+      "You maintain a concise running summary for retrieval use.",
+      "Update the summary using only factual details from the conversation.",
+      "Preserve stable preferences, commitments, open tasks, ongoing topics, tone cues, and important context.",
+      "Do not write meta narration such as 'the conversation shows', 'the user discusses', or mention Rocket.Chat unless it is directly relevant.",
+      "Do not include anything speculative.",
+      "Keep the summary under 220 words.",
+      "",
+      `Current summary:\n${input.currentSummary?.trim() || "(none)"}`,
+      "",
+      `New user message:\n${input.incomingText.trim()}`,
+      "",
+      `Assistant reply actually sent:\n${input.assistantReply?.trim() || "(none sent)"}`,
+    ].join("\n");
+
+    const response = await this.openai.responses.create({
+      model: this.config.summaryModel,
+      input: [
+        {
+          role: "system",
+          content:
+            "Return only the updated conversation summary text with no headings or markdown.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+    });
+
+    const output = response.output_text?.trim();
+    if (!output) {
+      throw new Error("OpenAI summary response did not contain text output");
+    }
+
+    return cleanSummaryText(output);
+  }
+
+  async embedText(text: string): Promise<number[]> {
+    const response = await this.openai.embeddings.create({
+      model: this.config.embeddingModel,
+      input: text,
+    });
+
+    return response.data[0]?.embedding ?? [];
   }
 }

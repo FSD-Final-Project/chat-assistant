@@ -55,7 +55,7 @@ export function DraggableMember({ id, name, avatars, roomType }: DraggableMember
                 {avatars.slice(0, 2).map((avatar, i) => (
                     <Avatar key={i} className="h-10 w-10 border-2 border-card-light">
                         <AvatarImage src={avatar} />
-                        <AvatarFallback>{name[0]}</AvatarFallback>
+                        <AvatarFallback seed={name}>{name[0]}</AvatarFallback>
                     </Avatar>
                 ))}
             </div>

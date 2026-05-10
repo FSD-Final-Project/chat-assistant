@@ -100,6 +100,7 @@ export class BotRunner {
         subscription.roomType,
         subscription.id,
         message,
+        await this.replyService.embedText((message.msg ?? "").trim()),
       );
 
       const incomingText = (message.msg ?? "").trim();
@@ -110,7 +111,8 @@ export class BotRunner {
 
       const suggestedReply = await this.replyService.generateReply(
         incomingText,
-        contextPayload.context,
+        contextPayload.currentSummary,
+        contextPayload.relevantSummaries,
       );
 
       if (contextPayload.subscription.preferenceColor === "green") {
@@ -123,8 +125,10 @@ export class BotRunner {
             postedMessage,
           );
         }
+        await this.updateSummary(subscription, message._id, incomingText, suggestedReply, contextPayload.currentSummary?.summary);
         console.log(`[${subscription.roomId}] Bot: ${suggestedReply}`);
       } else {
+        await this.updateSummary(subscription, message._id, incomingText, undefined, contextPayload.currentSummary?.summary);
         await this.botNotificationStore.createNotification({
           auth: this.auth,
           roomId: subscription.roomId,
@@ -152,6 +156,30 @@ export class BotRunner {
     } finally {
       this.state.markProcessed(message._id);
     }
+  }
+
+  private async updateSummary(
+    subscription: ManagedSubscription,
+    messageId: string,
+    incomingText: string,
+    assistantReply: string | undefined,
+    currentSummary: string | undefined,
+  ): Promise<void> {
+    const revisedSummary = await this.replyService.reviseSummary({
+      currentSummary,
+      incomingText,
+      assistantReply,
+    });
+    const embedding = await this.replyService.embedText(revisedSummary);
+    await this.botContextStore.saveSummary({
+      auth: this.auth,
+      subscription,
+      summary: revisedSummary,
+      embedding,
+      lastMessageId: messageId,
+      sourceMessageCount: undefined,
+      source: "bot",
+    });
   }
 
   private shouldRespondToMessage(message: RocketChatMessage): boolean {

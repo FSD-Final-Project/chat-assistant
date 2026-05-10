@@ -8,6 +8,8 @@ import type { RocketChatMessage } from "../types/rocketchat.js";
 
 interface BotContextResponse {
   subscription?: ManagedSubscription;
+  currentSummary?: BotContextPayload["currentSummary"];
+  relevantSummaries?: BotContextPayload["relevantSummaries"];
   context?: BotContextPayload["context"];
 }
 
@@ -20,6 +22,7 @@ export class BotContextStore {
     roomType: string | undefined,
     subscriptionId: string | undefined,
     message: RocketChatMessage,
+    queryEmbedding: number[],
   ): Promise<BotContextPayload> {
     const response = await fetch(`${this.config.mainServerUrl}/users/internal/bot-context`, {
       method: "POST",
@@ -34,6 +37,7 @@ export class BotContextStore {
         roomType,
         subscriptionId,
         contextLimit: this.config.maxContextMessages,
+        queryEmbedding,
         message,
       }),
     });
@@ -52,7 +56,45 @@ export class BotContextStore {
 
     return {
       subscription: payload.subscription,
-      context: payload.context ?? [],
+      currentSummary: payload.currentSummary ?? null,
+      relevantSummaries: payload.relevantSummaries ?? [],
     };
+  }
+
+  async saveSummary(input: {
+    auth: RocketChatAuth;
+    subscription: ManagedSubscription;
+    summary: string;
+    embedding: number[];
+    lastMessageId?: string;
+    sourceMessageCount?: number;
+    source: "worker" | "bot";
+  }): Promise<void> {
+    const response = await fetch(`${this.config.mainServerUrl}/users/internal/rocket-summaries`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Api-Key": this.config.internalApiKey,
+      },
+      body: JSON.stringify({
+        googleId: input.auth.googleId,
+        email: input.auth.email,
+        subscriptionId: input.subscription.id,
+        roomId: input.subscription.roomId,
+        roomType: input.subscription.roomType,
+        summary: input.summary,
+        embedding: input.embedding,
+        lastMessageId: input.lastMessageId,
+        sourceMessageCount: input.sourceMessageCount,
+        source: input.source,
+      }),
+    });
+
+    if (!response.ok) {
+      const messageText = await response.text();
+      throw new Error(
+        `Failed to save bot summary for '${input.auth.email ?? input.auth.googleId}': ${response.status} ${messageText}`,
+      );
+    }
   }
 }
