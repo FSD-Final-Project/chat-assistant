@@ -29,6 +29,9 @@ async function bootstrap(): Promise<void> {
       subscriptionPreferenceStore,
       botNotificationStore,
       botContextStore,
+      async () => {
+      await credentialsStore.disconnectRocketChatAuth(rocketChatAuth);
+    }
     );
   });
 

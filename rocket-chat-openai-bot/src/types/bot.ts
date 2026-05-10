@@ -6,7 +6,7 @@ export interface ContextEntry {
 }
 
 export interface RocketChatAuth {
-  googleId: string;
+  googleId?: string;
   email?: string;
   userToken: string;
   userId: string;

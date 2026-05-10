@@ -123,6 +123,22 @@ export class UsersService {
     );
   }
 
+  async clearRocketIntegration(googleId: string): Promise<UserDocument | null> {
+    return this.userModel.findOneAndUpdate(
+      { googleId },
+      {
+        $unset: {
+          "rocketIntegration.encryptedUserToken": "",
+          "rocketIntegration.encryptedUserId": "",
+        },
+        $set: {
+          "rocketIntegration.updatedAt": new Date(),
+        },
+      },
+      { new: true }
+    );
+  }
+
   hasRocketIntegration(user: Pick<User, "rocketIntegration"> | null | undefined): boolean {
     return Boolean(
       user?.rocketIntegration?.encryptedUserToken &&
