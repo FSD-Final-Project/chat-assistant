@@ -18,7 +18,7 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
-    "rocket": "cd rocketchat-compose && docker compose -f compose.database.yml -f compose.monitoring.yml -f compose.traefik.yml -f compose.yml up -d"
+    "rocket": "docker compose up -d"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

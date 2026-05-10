@@ -13,7 +13,7 @@ Chat Assistant is a full-stack workspace with:
 - `server/`: NestJS backend for Google OAuth and session auth
 - `user-data-worker/`: NestJS worker for Rocket.Chat data syncing
 - `rocket-chat-openai-bot/`: Rocket.Chat bot service
-- `rocketchat-compose/`: local Rocket.Chat docker setup
+- `docker-compose.yml`: local Rocket.Chat container setup
 
 ## Prerequisites
 
@@ -22,6 +22,7 @@ Chat Assistant is a full-stack workspace with:
 - A Google OAuth client
 - An OpenAI API key
 - A Rocket.Chat server and bot user token
+- MongoDB running locally with replica set mode enabled when using the local Rocket.Chat container
 
 ## Root Scripts
 
@@ -42,7 +43,7 @@ Available scripts:
 - `npm run build` - build the Vite client
 - `npm run build:server` - build the Nest server
 - `npm run build:worker` - build the Nest worker
-- `npm run rocket` - start the local Rocket.Chat stack from `rocketchat-compose`
+- `npm run rocket` - start the local Rocket.Chat container from `docker-compose.yml`
 
 `npm run dev:all` uses `concurrently`, so make sure root dependencies are installed first.
 
@@ -107,6 +108,58 @@ Run only the server:
 
 ```sh
 npm run dev:server
+```
+
+## Local Rocket.Chat
+
+The root `docker-compose.yml` runs Rocket.Chat on `http://localhost:3000` and connects it to MongoDB running on your host machine.
+
+Setup:
+
+```sh
+cp .env.example .env
+```
+
+Root `.env`:
+
+```sh
+MONGO_HOST=host.docker.internal
+```
+
+`MONGO_HOST` must be the hostname or IP address that the Rocket.Chat container can use to reach the MongoDB host. `0.0.0.0` is only valid for MongoDB's bind address; do not use it as `MONGO_HOST`.
+
+For Docker Desktop, `host.docker.internal` is the portable default. If the local MongoDB replica set was initialized with a specific host IP, use that same IP instead:
+
+```sh
+MONGO_HOST=192.168.56.1
+```
+
+MongoDB must run with replica set mode enabled. In `mongod.cfg`:
+
+```yaml
+net:
+  port: 27017
+  bindIp: 0.0.0.0
+
+replication:
+  replSetName: rs0
+```
+
+After restarting MongoDB, initialize the replica set once with the same host that Rocket.Chat will use:
+
+```js
+rs.initiate({
+  _id: "rs0",
+  members: [
+    { _id: 0, host: "192.168.56.1:27017" }
+  ]
+})
+```
+
+Start Rocket.Chat:
+
+```sh
+npm run rocket
 ```
 
 ## User Data Worker
