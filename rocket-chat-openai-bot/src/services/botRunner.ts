@@ -1,6 +1,6 @@
 import type { BotConfig, ManagedSubscription, RocketChatAuth } from "../types/bot.js";
 import type { RocketChatMessage } from "../types/rocketchat.js";
-import { RocketChatClient } from "../clients/rocketChatClient.js";
+import { RocketChatAuthError, RocketChatClient } from "../clients/rocketChatClient.js";
 import { RocketChatRealtimeClient } from "../clients/rocketChatRealtimeClient.js";
 import { BotState } from "../state/botState.js";
 import { sleep } from "../utils/sleep.js";
@@ -21,6 +21,7 @@ export class BotRunner {
     private readonly subscriptionPreferenceStore: SubscriptionPreferenceStore,
     private readonly botNotificationStore: BotNotificationStore,
     private readonly botContextStore: BotContextStore,
+    private readonly disconnectAuth: () => Promise<void>
   ) {}
 
   async start(): Promise<void> {
@@ -44,6 +45,11 @@ export class BotRunner {
           await this.processMessage(subscription, message);
         });
       } catch (error) {
+        if (error instanceof RocketChatAuthError) {
+          await this.handleAuthError(error);
+          return;
+        }
+
         const message = error instanceof Error ? error.message : String(error);
         console.error(
           `[${this.rocketChatClient.identityLabel}] Realtime listener error: ${message}`,
@@ -52,6 +58,25 @@ export class BotRunner {
 
       subscriptions = await this.subscriptionPreferenceStore.loadManagedSubscriptions(this.auth);
       await sleep(this.config.rcRetryBackoffMs);
+    }
+  }
+
+  private async handleAuthError(error: RocketChatAuthError): Promise<void> {
+    console.error(
+      `[${this.rocketChatClient.identityLabel}] Rocket.Chat auth failed (${error.status}). Disconnecting stored integration.`
+    );
+
+    try {
+      await this.disconnectAuth();
+      console.log(
+        `[${this.rocketChatClient.identityLabel}] Removed stored Rocket.Chat credentials after auth failure.`
+      );
+    } catch (disconnectError) {
+      const message =
+        disconnectError instanceof Error ? disconnectError.message : String(disconnectError);
+      console.error(
+        `[${this.rocketChatClient.identityLabel}] Failed to remove stored Rocket.Chat credentials: ${message}`
+      );
     }
   }
 

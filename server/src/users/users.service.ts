@@ -99,6 +99,7 @@ export class UsersService {
     );
   }
 
+<<<<<<< HEAD
   async saveRefreshToken(googleId: string, refreshTokenHash: string, refreshTokenExpiresAt: Date): Promise<void> {
     await this.userModel.updateOne(
       { googleId },
@@ -120,6 +121,21 @@ export class UsersService {
           "localAuth.refreshTokenExpiresAt": "",
         },
       },
+=======
+  async clearRocketIntegration(googleId: string): Promise<UserDocument | null> {
+    return this.userModel.findOneAndUpdate(
+      { googleId },
+      {
+        $unset: {
+          "rocketIntegration.encryptedUserToken": "",
+          "rocketIntegration.encryptedUserId": "",
+        },
+        $set: {
+          "rocketIntegration.updatedAt": new Date(),
+        },
+      },
+      { new: true },
+>>>>>>> 11b2e9269353d5cfebd31563f26808ed2b074416
     );
   }
 

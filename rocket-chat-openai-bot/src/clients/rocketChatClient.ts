@@ -6,6 +6,16 @@ import type {
 } from "../types/rocketchat.js";
 import { sleep } from "../utils/sleep.js";
 
+export class RocketChatAuthError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number
+  ) {
+    super(message);
+    this.name = "RocketChatAuthError";
+  }
+}
+
 export class RocketChatClient {
   private static queue = Promise.resolve();
   private static nextRequestAt = 0;
@@ -97,6 +107,13 @@ export class RocketChatClient {
 
         if (!response.ok) {
           const text = await response.text();
+          if (response.status === 401) {
+            throw new RocketChatAuthError(
+              `Rocket.Chat API auth error ${response.status}: ${text}`,
+              response.status
+            );
+          }
+
           throw new Error(`Rocket.Chat API error ${response.status}: ${text}`);
         }
 

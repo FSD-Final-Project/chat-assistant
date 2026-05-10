@@ -11,6 +11,12 @@ interface RocketIntegrationBody {
   rocketUserId?: string;
 }
 
+interface RocketIntegrationDisconnectBody {
+  googleId?: string;
+  email?: string;
+  rocketUserId?: string;
+}
+
 interface RocketSubscriptionsSyncBody {
   googleId?: string;
   email?: string;
@@ -374,11 +380,19 @@ export class UsersController {
     response.status(200).json(rocketAuth);
   }
 
+<<<<<<< HEAD
   @Get("internal/bot-subscriptions")
   async getInternalBotSubscriptions(
     @Req() request: Request,
     @Res() response: Response,
     @Query() query: InternalBotSubscriptionsQuery,
+=======
+  @Post("internal/rocket-auth/disconnect")
+  async disconnectInternalRocketAuth(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: RocketIntegrationDisconnectBody,
+>>>>>>> 11b2e9269353d5cfebd31563f26808ed2b074416
   ) {
     try {
       if (!this.isInternalRequestAuthorized(request)) {
@@ -390,6 +404,7 @@ export class UsersController {
       return;
     }
 
+<<<<<<< HEAD
     const googleId = query.googleId?.trim();
     if (!googleId) {
       response.status(400).json({ message: "googleId is required" });
@@ -437,6 +452,31 @@ export class UsersController {
         roomType: subscription.roomType,
       })),
     });
+=======
+    const googleId = body.googleId?.trim();
+    const email = body.email?.trim().toLowerCase();
+    const rocketUserId = body.rocketUserId?.trim();
+
+    const user = googleId
+      ? await this.usersService.findByGoogleId(googleId)
+      : email
+        ? await this.usersService.findByEmail(email)
+        : null;
+
+    if (!user) {
+      response.status(404).json({ message: "User not found" });
+      return;
+    }
+
+    const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
+    if (rocketUserId && rocketAuth?.userId && rocketAuth.userId !== rocketUserId) {
+      response.status(409).json({ message: "Rocket.Chat user id does not match stored integration" });
+      return;
+    }
+
+    await this.usersService.clearRocketIntegration(user.googleId);
+    response.status(200).json({ success: true });
+>>>>>>> 11b2e9269353d5cfebd31563f26808ed2b074416
   }
 
   @Post("internal/rocket-sync/subscriptions")

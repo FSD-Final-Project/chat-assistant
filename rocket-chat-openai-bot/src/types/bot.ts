@@ -1,7 +1,7 @@
 export type ChatRole = "user" | "assistant";
 
 export interface RocketChatAuth {
-  googleId: string;
+  googleId?: string;
   email?: string;
   userToken: string;
   userId: string;
