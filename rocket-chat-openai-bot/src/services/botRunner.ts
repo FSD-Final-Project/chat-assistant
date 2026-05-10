@@ -1,6 +1,6 @@
 import type { BotConfig } from "../types/bot.js";
 import type { RocketChatMessage } from "../types/rocketchat.js";
-import { RocketChatClient } from "../clients/rocketChatClient.js";
+import { RocketChatAuthError, RocketChatClient } from "../clients/rocketChatClient.js";
 import { BotState } from "../state/botState.js";
 import { sleep } from "../utils/sleep.js";
 import { ReplyService } from "./replyService.js";
@@ -13,7 +13,8 @@ export class BotRunner {
   constructor(
     private readonly config: BotConfig,
     private readonly rocketChatClient: RocketChatClient,
-    private readonly replyService: ReplyService
+    private readonly replyService: ReplyService,
+    private readonly disconnectAuth: () => Promise<void>
   ) {}
 
   async start(): Promise<void> {
@@ -37,11 +38,35 @@ export class BotRunner {
           await this.processRoom(room._id);
         }
       } catch (error) {
+        if (error instanceof RocketChatAuthError) {
+          await this.handleAuthError(error);
+          return;
+        }
+
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Polling error: ${message}`);
       }
 
       await sleep(this.config.pollIntervalMs);
+    }
+  }
+
+  private async handleAuthError(error: RocketChatAuthError): Promise<void> {
+    console.error(
+      `[${this.rocketChatClient.identityLabel}] Rocket.Chat auth failed (${error.status}). Disconnecting stored integration.`
+    );
+
+    try {
+      await this.disconnectAuth();
+      console.log(
+        `[${this.rocketChatClient.identityLabel}] Removed stored Rocket.Chat credentials after auth failure.`
+      );
+    } catch (disconnectError) {
+      const message =
+        disconnectError instanceof Error ? disconnectError.message : String(disconnectError);
+      console.error(
+        `[${this.rocketChatClient.identityLabel}] Failed to remove stored Rocket.Chat credentials: ${message}`
+      );
     }
   }
 

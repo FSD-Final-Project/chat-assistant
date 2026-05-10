@@ -14,7 +14,9 @@ async function bootstrap(): Promise<void> {
     const rocketChatClient = new RocketChatClient(config, rocketChatAuth);
     const contextStore = new ContextStore(config.maxContextMessages);
     const replyService = new ReplyService(config, contextStore);
-    return new BotRunner(config, rocketChatClient, replyService);
+    return new BotRunner(config, rocketChatClient, replyService, async () => {
+      await credentialsStore.disconnectRocketChatAuth(rocketChatAuth);
+    });
   });
 
   await Promise.all(botRunners.map((botRunner) => botRunner.start()));

@@ -10,6 +10,12 @@ interface RocketIntegrationBody {
   rocketUserId?: string;
 }
 
+interface RocketIntegrationDisconnectBody {
+  googleId?: string;
+  email?: string;
+  rocketUserId?: string;
+}
+
 interface RocketSubscriptionsSyncBody {
   googleId?: string;
   email?: string;
@@ -162,6 +168,47 @@ export class UsersController {
     }
 
     response.status(200).json(rocketAuth);
+  }
+
+  @Post("internal/rocket-auth/disconnect")
+  async disconnectInternalRocketAuth(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: RocketIntegrationDisconnectBody,
+  ) {
+    try {
+      if (!this.isInternalRequestAuthorized(request)) {
+        response.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+    } catch (error) {
+      response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
+      return;
+    }
+
+    const googleId = body.googleId?.trim();
+    const email = body.email?.trim().toLowerCase();
+    const rocketUserId = body.rocketUserId?.trim();
+
+    const user = googleId
+      ? await this.usersService.findByGoogleId(googleId)
+      : email
+        ? await this.usersService.findByEmail(email)
+        : null;
+
+    if (!user) {
+      response.status(404).json({ message: "User not found" });
+      return;
+    }
+
+    const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
+    if (rocketUserId && rocketAuth?.userId && rocketAuth.userId !== rocketUserId) {
+      response.status(409).json({ message: "Rocket.Chat user id does not match stored integration" });
+      return;
+    }
+
+    await this.usersService.clearRocketIntegration(user.googleId);
+    response.status(200).json({ success: true });
   }
 
   @Post("internal/rocket-sync/subscriptions")
