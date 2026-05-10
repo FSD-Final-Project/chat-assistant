@@ -85,14 +85,23 @@ export class RocketSyncService {
       .filter((subscriptionId): subscriptionId is string => typeof subscriptionId === "string");
 
     if (activeSubscriptionIds.length === 0) {
-      await this.subscriptionModel.deleteMany({ appUserGoogleId });
+      await Promise.all([
+        this.subscriptionModel.deleteMany({ appUserGoogleId }),
+        this.summaryModel.deleteMany({ appUserGoogleId }),
+      ]);
       return;
     }
 
-    await this.subscriptionModel.deleteMany({
-      appUserGoogleId,
-      subscriptionId: { $nin: activeSubscriptionIds },
-    });
+    await Promise.all([
+      this.subscriptionModel.deleteMany({
+        appUserGoogleId,
+        subscriptionId: { $nin: activeSubscriptionIds },
+      }),
+      this.summaryModel.deleteMany({
+        appUserGoogleId,
+        subscriptionId: { $nin: activeSubscriptionIds },
+      }),
+    ]);
   }
 
   async removeSubscriptionsByIds(
@@ -104,10 +113,23 @@ export class RocketSyncService {
       return;
     }
 
-    await this.subscriptionModel.deleteMany({
-      appUserGoogleId,
-      subscriptionId: { $in: normalizedIds },
-    });
+    await Promise.all([
+      this.subscriptionModel.deleteMany({
+        appUserGoogleId,
+        subscriptionId: { $in: normalizedIds },
+      }),
+      this.summaryModel.deleteMany({
+        appUserGoogleId,
+        subscriptionId: { $in: normalizedIds },
+      }),
+    ]);
+  }
+
+  async clearRocketDataForUser(appUserGoogleId: string): Promise<void> {
+    await Promise.all([
+      this.subscriptionModel.deleteMany({ appUserGoogleId }),
+      this.summaryModel.deleteMany({ appUserGoogleId }),
+    ]);
   }
 
   async applySubscriptionDelta(

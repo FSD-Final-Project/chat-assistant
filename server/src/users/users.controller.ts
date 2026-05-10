@@ -33,6 +33,12 @@ interface RocketMessagesSyncBody {
   messages?: Array<Record<string, unknown>>;
 }
 
+interface RocketSyncStatusBody {
+  googleId?: string;
+  status?: "pending" | "syncing" | "completed" | "failed";
+  error?: string;
+}
+
 interface InternalBotContextBody {
   googleId?: string;
   email?: string;
@@ -483,6 +489,7 @@ export class UsersController {
     }
 
     await this.usersService.clearRocketIntegration(user.googleId);
+    await this.rocketSyncService.clearRocketDataForUser(user.googleId);
     response.status(200).json({ success: true });
   }
 
@@ -563,6 +570,43 @@ export class UsersController {
 
     await this.rocketSyncService.upsertMessages(googleId, email, roomId, roomType, messages);
     response.status(200).json({ success: true, count: messages.length });
+  }
+
+  @Post("internal/rocket-sync/status")
+  async updateInternalRocketSyncStatus(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: RocketSyncStatusBody,
+  ) {
+    try {
+      if (!this.isInternalRequestAuthorized(request)) {
+        response.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+    } catch (error) {
+      response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
+      return;
+    }
+
+    const googleId = body.googleId?.trim();
+    const status = body.status;
+    if (!googleId || !status || !["pending", "syncing", "completed", "failed"].includes(status)) {
+      response.status(400).json({ message: "googleId and valid status are required" });
+      return;
+    }
+
+    const user = await this.usersService.updateRocketSyncStatus(
+      googleId,
+      status,
+      body.error?.trim(),
+    );
+
+    if (!user) {
+      response.status(404).json({ message: "User not found" });
+      return;
+    }
+
+    response.status(200).json({ success: true });
   }
 
   @Post("internal/bot-notifications")
@@ -825,7 +869,15 @@ export class UsersController {
     }
 
     const subscriptions = await this.rocketSyncService.listSubscriptions(sessionUser.id);
+    const user = await this.usersService.findByGoogleId(sessionUser.id);
+    const rocketIntegration = user?.rocketIntegration;
     response.status(200).json({
+      sync: {
+        status: rocketIntegration?.syncStatus ?? "completed",
+        startedAt: rocketIntegration?.syncStartedAt,
+        completedAt: rocketIntegration?.syncCompletedAt,
+        error: rocketIntegration?.syncError,
+      },
       subscriptions: subscriptions.map((subscription) => ({
         id: subscription.subscriptionId,
         roomId: subscription.roomId,

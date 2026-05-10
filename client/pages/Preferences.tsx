@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
     DndContext,
     DragEndEvent,
@@ -17,6 +17,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { TimePicker } from "@/components/ui/time-picker";
 import { DatePicker } from "@/components/ui/date-picker";
 import { toast } from "@/hooks/use-toast";
+import { LoaderCircle } from "lucide-react";
 
 type ColorType = "red" | "yellow" | "green";
 
@@ -46,6 +47,16 @@ interface RocketSubscriptionResponseItem {
     };
 }
 
+interface RocketSubscriptionsResponse {
+    sync?: {
+        status?: "pending" | "syncing" | "completed" | "failed";
+        startedAt?: string;
+        completedAt?: string;
+        error?: string;
+    };
+    subscriptions?: RocketSubscriptionResponseItem[];
+}
+
 function mapSubscriptionToMember(subscription: RocketSubscriptionResponseItem): GroupMember {
     const name =
         subscription.payload?.fname ??
@@ -73,6 +84,7 @@ export default function Preferences() {
     const [activeId, setActiveId] = useState<string | null>(null);
     const [activeOriginColor, setActiveOriginColor] = useState<ColorType | null>(null);
     const [isLoadingSubscriptions, setIsLoadingSubscriptions] = useState(true);
+    const [syncStatus, setSyncStatus] = useState<RocketSubscriptionsResponse["sync"]>();
 
     // Time pickers state
     const [startTime, setStartTime] = useState("15:00");
@@ -99,35 +111,30 @@ export default function Preferences() {
         };
     }, [searchValue]);
 
-    useEffect(() => {
-        let isMounted = true;
+    const loadSubscriptions = useCallback(async (showErrorToast = true) => {
+        try {
+            const response = await fetch("/users/me/rocket-subscriptions", {
+                credentials: "include",
+            });
 
-        const loadSubscriptions = async () => {
-            try {
-                const response = await fetch("/users/me/rocket-subscriptions", {
-                    credentials: "include",
-                });
+            const payload = (await response.json()) as RocketSubscriptionsResponse & { message?: string };
+            if (!response.ok) {
+                throw new Error(payload.message ?? "Failed to load Rocket subscriptions");
+            }
 
-                const payload = await response.json();
-                if (!response.ok) {
-                    throw new Error(payload.message ?? "Failed to load Rocket subscriptions");
-                }
+            const nextGroups: ColorGroups = { red: [], yellow: [], green: [] };
+            for (const subscription of payload.subscriptions ?? []) {
+                const member = mapSubscriptionToMember(subscription);
+                const color = isColorType(subscription.preferenceColor)
+                    ? subscription.preferenceColor
+                    : "yellow";
+                nextGroups[color].push(member);
+            }
 
-                if (!isMounted) return;
-
-                const nextGroups: ColorGroups = { red: [], yellow: [], green: [] };
-                for (const subscription of payload.subscriptions as RocketSubscriptionResponseItem[]) {
-                    const member = mapSubscriptionToMember(subscription);
-                    const color = isColorType(subscription.preferenceColor)
-                        ? subscription.preferenceColor
-                        : "yellow";
-                    nextGroups[color].push(member);
-                }
-
-                setGroups(nextGroups);
-            } catch (error) {
-                if (!isMounted) return;
-
+            setSyncStatus(payload.sync);
+            setGroups(nextGroups);
+        } catch (error) {
+            if (showErrorToast) {
                 const description =
                     error instanceof Error ? error.message : "Failed to load Rocket subscriptions";
                 toast({
@@ -135,19 +142,31 @@ export default function Preferences() {
                     description,
                     variant: "destructive",
                 });
-            } finally {
-                if (isMounted) {
-                    setIsLoadingSubscriptions(false);
-                }
             }
-        };
+        } finally {
+            setIsLoadingSubscriptions(false);
+        }
+    }, []);
 
+    useEffect(() => {
         void loadSubscriptions();
+    }, [loadSubscriptions]);
+
+    const isSyncInProgress = syncStatus?.status === "pending" || syncStatus?.status === "syncing";
+
+    useEffect(() => {
+        if (!isSyncInProgress) {
+            return;
+        }
+
+        const intervalId = window.setInterval(() => {
+            void loadSubscriptions(false);
+        }, 5000);
 
         return () => {
-            isMounted = false;
+            window.clearInterval(intervalId);
         };
-    }, []);
+    }, [isSyncInProgress, loadSubscriptions]);
 
     const findContainer = (id: string): ColorType | null => {
         if (id in groups) return id as ColorType;
@@ -299,6 +318,22 @@ export default function Preferences() {
             onSearchChange={setSearchValue}
             searchPlaceholder="Search subscriptions..."
         >
+            {isSyncInProgress && (
+                <div className="mb-6 flex items-center gap-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-card-light-foreground">
+                    <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-yellow-500" />
+                    <span>
+                        Rocket.Chat data is still syncing. Preferences may show old subscriptions until the sync completes.
+                    </span>
+                </div>
+            )}
+
+            {syncStatus?.status === "failed" && (
+                <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-card-light-foreground">
+                    Rocket.Chat sync failed. Preferences may be out of date.
+                    {syncStatus.error ? ` ${syncStatus.error}` : ""}
+                </div>
+            )}
+
             <DndContext
                 sensors={sensors}
                 onDragStart={handleDragStart}

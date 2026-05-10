@@ -51,11 +51,22 @@ interface OpenAiResponsesApiPayload {
   }>;
 }
 
+class RocketChatAuthError extends Error {
+  constructor(
+    message: string,
+    public readonly integration: RocketIntegrationIdentity,
+  ) {
+    super(message);
+    this.name = "RocketChatAuthError";
+  }
+}
+
 @Injectable()
 export class UserDataWorkerService {
   private readonly logger = new Logger(UserDataWorkerService.name);
   private readonly roomWatermarks = new Map<string, Map<string, Date>>();
   private readonly incrementalSubscriptionWatermarks = new Map<string, Date>();
+  private readonly activeSyncCounts = new Map<string, number>();
   private nextRocketRequestAt = 0;
   private fullSyncIteration = 0;
   private incrementalSyncIteration = 0;
@@ -94,8 +105,10 @@ export class UserDataWorkerService {
         );
 
         for (const integration of integrations) {
-          await this.runFullSubscriptionSyncForUser(integration);
-          await this.ensureMissingSummaries(integration);
+          await this.runForIntegration(integration, async () => {
+            await this.runFullSubscriptionSyncForUser(integration);
+            await this.ensureMissingSummaries(integration);
+          });
         }
 
         this.logger.log(`Full sync ${this.fullSyncIteration}: cycle completed`);
@@ -119,8 +132,10 @@ export class UserDataWorkerService {
         );
 
         for (const integration of integrations) {
-          await this.runIncrementalSubscriptionSyncForUser(integration);
-          await this.ensureMissingSummaries(integration);
+          await this.runForIntegration(integration, async () => {
+            await this.runIncrementalSubscriptionSyncForUser(integration);
+            await this.ensureMissingSummaries(integration);
+          });
         }
 
         this.logger.log(`Incremental sync ${this.incrementalSyncIteration}: cycle completed`);
@@ -131,6 +146,54 @@ export class UserDataWorkerService {
 
       await this.sleep(this.incrementalSubscriptionsSyncIntervalMs);
     }
+  }
+
+  private async runForIntegration(
+    integration: RocketIntegrationIdentity,
+    task: () => Promise<void>,
+  ): Promise<void> {
+    await this.beginIntegrationSync(integration.googleId);
+
+    try {
+      await task();
+      if (this.endIntegrationSync(integration.googleId)) {
+        await this.updateSyncStatus(integration.googleId, "completed");
+      }
+    } catch (error) {
+      if (error instanceof RocketChatAuthError) {
+        this.endIntegrationSync(integration.googleId);
+        await this.disconnectIntegrationAfterAuthFailure(error.integration, error.message);
+        return;
+      }
+
+      if (this.endIntegrationSync(integration.googleId)) {
+        await this.updateSyncStatus(
+          integration.googleId,
+          "failed",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async beginIntegrationSync(googleId: string): Promise<void> {
+    const currentCount = this.activeSyncCounts.get(googleId) ?? 0;
+    this.activeSyncCounts.set(googleId, currentCount + 1);
+    if (currentCount === 0) {
+      await this.updateSyncStatus(googleId, "syncing");
+    }
+  }
+
+  private endIntegrationSync(googleId: string): boolean {
+    const nextCount = Math.max(0, (this.activeSyncCounts.get(googleId) ?? 1) - 1);
+    if (nextCount === 0) {
+      this.activeSyncCounts.delete(googleId);
+      return true;
+    }
+
+    this.activeSyncCounts.set(googleId, nextCount);
+    return false;
   }
 
   private async runFullSubscriptionSyncForUser(
@@ -524,6 +587,36 @@ export class UserDataWorkerService {
     return (await response.json()) as RocketIntegrationIdentity[];
   }
 
+  private async disconnectIntegrationAfterAuthFailure(
+    integration: RocketIntegrationIdentity,
+    reason: string,
+  ): Promise<void> {
+    this.logger.warn(
+      `Disconnecting Rocket.Chat integration for '${integration.email}' after auth failure: ${reason}`,
+    );
+
+    await this.postToMainServer("/users/internal/rocket-auth/disconnect", {
+      googleId: integration.googleId,
+      email: integration.email,
+      rocketUserId: integration.userId,
+    });
+
+    this.incrementalSubscriptionWatermarks.delete(integration.googleId);
+    this.roomWatermarks.delete(integration.googleId);
+  }
+
+  private async updateSyncStatus(
+    googleId: string,
+    status: "syncing" | "completed" | "failed",
+    error?: string,
+  ): Promise<void> {
+    await this.postToMainServer("/users/internal/rocket-sync/status", {
+      googleId,
+      status,
+      error,
+    });
+  }
+
   private async postToMainServer(path: string, body: Record<string, unknown>): Promise<void> {
     const url = `${this.mainServerUrl}${path}`;
     const response = await this.fetchWithContext(`persist Rocket data to main server (${path})`, url, {
@@ -578,6 +671,13 @@ export class UserDataWorkerService {
 
       if (!response.ok) {
         const body = await response.text();
+        if (response.status === 401) {
+          throw new RocketChatAuthError(
+            `Rocket.Chat request failed for '${integration.email}' on ${path}: ${response.status} ${body}`,
+            integration,
+          );
+        }
+
         throw new Error(
           `Rocket.Chat request failed for '${integration.email}' on ${path}: ${response.status} ${body}`,
         );
