@@ -261,6 +261,11 @@ export class UserDataWorkerService {
       });
       removedSubscriptionIds = [];
     }
+
+    const latestUpdatedAt = this.getLatestSubscriptionTimestamp(updatedSubscriptions);
+    if (latestUpdatedAt) {
+      this.incrementalSubscriptionWatermarks.set(integration.googleId, latestUpdatedAt);
+    }
   }
 
   private async syncRoomMessages(

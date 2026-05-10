@@ -380,19 +380,11 @@ export class UsersController {
     response.status(200).json(rocketAuth);
   }
 
-<<<<<<< HEAD
   @Get("internal/bot-subscriptions")
   async getInternalBotSubscriptions(
     @Req() request: Request,
     @Res() response: Response,
     @Query() query: InternalBotSubscriptionsQuery,
-=======
-  @Post("internal/rocket-auth/disconnect")
-  async disconnectInternalRocketAuth(
-    @Req() request: Request,
-    @Res() response: Response,
-    @Body() body: RocketIntegrationDisconnectBody,
->>>>>>> 11b2e9269353d5cfebd31563f26808ed2b074416
   ) {
     try {
       if (!this.isInternalRequestAuthorized(request)) {
@@ -404,7 +396,6 @@ export class UsersController {
       return;
     }
 
-<<<<<<< HEAD
     const googleId = query.googleId?.trim();
     if (!googleId) {
       response.status(400).json({ message: "googleId is required" });
@@ -452,7 +443,24 @@ export class UsersController {
         roomType: subscription.roomType,
       })),
     });
-=======
+  }
+
+  @Post("internal/rocket-auth/disconnect")
+  async disconnectInternalRocketAuth(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: RocketIntegrationDisconnectBody,
+  ) {
+    try {
+      if (!this.isInternalRequestAuthorized(request)) {
+        response.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+    } catch (error) {
+      response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
+      return;
+    }
+
     const googleId = body.googleId?.trim();
     const email = body.email?.trim().toLowerCase();
     const rocketUserId = body.rocketUserId?.trim();
@@ -476,7 +484,6 @@ export class UsersController {
 
     await this.usersService.clearRocketIntegration(user.googleId);
     response.status(200).json({ success: true });
->>>>>>> 11b2e9269353d5cfebd31563f26808ed2b074416
   }
 
   @Post("internal/rocket-sync/subscriptions")

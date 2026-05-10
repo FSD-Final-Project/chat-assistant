@@ -1,5 +1,10 @@
 export type ChatRole = "user" | "assistant";
 
+export interface ContextEntry {
+  role: ChatRole;
+  text: string;
+}
+
 export interface RocketChatAuth {
   googleId?: string;
   email?: string;
@@ -28,6 +33,7 @@ export interface BotContextPayload {
   subscription: ManagedSubscription;
   currentSummary: SummaryContextItem | null;
   relevantSummaries: SummaryContextItem[];
+  context?: ContextEntry[];
 }
 
 export interface BotConfig {

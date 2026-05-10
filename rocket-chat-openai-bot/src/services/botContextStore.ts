@@ -10,6 +10,7 @@ interface BotContextResponse {
   subscription?: ManagedSubscription;
   currentSummary?: BotContextPayload["currentSummary"];
   relevantSummaries?: BotContextPayload["relevantSummaries"];
+  context?: BotContextPayload["context"];
 }
 
 export class BotContextStore {

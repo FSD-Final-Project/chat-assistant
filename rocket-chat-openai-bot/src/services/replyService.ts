@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 
-import type { BotConfig, SummaryContextItem } from "../types/bot.js";
+import type { BotConfig, ContextEntry, SummaryContextItem } from "../types/bot.js";
 
 function isTodoListMessage(text: string): boolean {
   const normalized = text.toLowerCase();
@@ -67,7 +67,7 @@ export class ReplyService {
   async generateReply(
     incomingText: string,
     currentSummary: SummaryContextItem | null,
-    relevantSummaries: SummaryContextItem[],
+    relevantSummaries: SummaryContextItem[]
   ): Promise<string> {
     const userText = this.config.botTriggerPrefix
       ? incomingText.trim().slice(this.config.botTriggerPrefix.length).trim()
@@ -78,6 +78,7 @@ export class ReplyService {
     }
 
     const summaryContext = buildSummaryContextBlock(currentSummary, relevantSummaries);
+
     const input = [
       { role: "system" as const, content: this.config.systemPrompt },
       ...(this.config.speakAsUser
