@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { MongooseModule } from "@nestjs/mongoose";
+import { resolve } from "node:path";
 import { AuthModule } from "./auth/auth.module";
 import { UsersModule } from "./users/users.module";
 
@@ -8,6 +9,11 @@ import { UsersModule } from "./users/users.module";
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: [
+        resolve(process.cwd(), ".env"),
+        resolve(process.cwd(), "server/.env"),
+        resolve(process.cwd(), "../server/.env"),
+      ],
     }),
     MongooseModule.forRootAsync({
       inject: [ConfigService],

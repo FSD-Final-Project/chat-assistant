@@ -67,6 +67,53 @@ export class RocketSyncService {
     }
   }
 
+  async reconcileSubscriptions(
+    appUserGoogleId: string,
+    appUserEmail: string,
+    subscriptions: RocketSubscriptionPayload[],
+  ): Promise<void> {
+    await this.upsertSubscriptions(appUserGoogleId, appUserEmail, subscriptions);
+
+    const activeSubscriptionIds = subscriptions
+      .map((subscription) => subscription._id)
+      .filter((subscriptionId): subscriptionId is string => typeof subscriptionId === "string");
+
+    if (activeSubscriptionIds.length === 0) {
+      await this.subscriptionModel.deleteMany({ appUserGoogleId });
+      return;
+    }
+
+    await this.subscriptionModel.deleteMany({
+      appUserGoogleId,
+      subscriptionId: { $nin: activeSubscriptionIds },
+    });
+  }
+
+  async removeSubscriptionsByIds(
+    appUserGoogleId: string,
+    subscriptionIds: string[],
+  ): Promise<void> {
+    const normalizedIds = subscriptionIds.filter((subscriptionId) => Boolean(subscriptionId));
+    if (normalizedIds.length === 0) {
+      return;
+    }
+
+    await this.subscriptionModel.deleteMany({
+      appUserGoogleId,
+      subscriptionId: { $in: normalizedIds },
+    });
+  }
+
+  async applySubscriptionDelta(
+    appUserGoogleId: string,
+    appUserEmail: string,
+    updatedSubscriptions: RocketSubscriptionPayload[],
+    removedSubscriptionIds: string[],
+  ): Promise<void> {
+    await this.upsertSubscriptions(appUserGoogleId, appUserEmail, updatedSubscriptions);
+    await this.removeSubscriptionsByIds(appUserGoogleId, removedSubscriptionIds);
+  }
+
   async upsertMessages(
     appUserGoogleId: string,
     appUserEmail: string,
@@ -115,6 +162,27 @@ export class RocketSyncService {
       appUserGoogleId,
       subscriptionId,
     });
+  }
+
+  async findSubscriptionByRoomId(
+    appUserGoogleId: string,
+    roomId: string,
+  ): Promise<RocketSubscriptionDocument | null> {
+    return this.subscriptionModel.findOne({
+      appUserGoogleId,
+      roomId,
+    });
+  }
+
+  async listRecentMessages(
+    appUserGoogleId: string,
+    roomId: string,
+    limit: number,
+  ): Promise<RocketMessageDocument[]> {
+    return this.messageModel
+      .find({ appUserGoogleId, roomId })
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(limit);
   }
 
   async updateSubscriptionPreferenceColor(

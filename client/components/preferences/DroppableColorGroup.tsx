@@ -59,7 +59,7 @@ export function DroppableColorGroup({ color, members }: DroppableColorGroupProps
                     )}
                 >
                     <SortableContext
-                        items={members.map((m) => m.id)}
+                        items={members.map((member) => member.id)}
                         strategy={verticalListSortingStrategy}
                     >
                         {members.map((member) => (

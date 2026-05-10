@@ -16,6 +16,8 @@ interface AuthContextValue {
   isLoading: boolean;
   refreshSession: () => Promise<void>;
   signInWithGoogle: () => void;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  registerWithEmail: (email: string, password: string, name?: string) => Promise<void>;
   signOut: () => Promise<void>;
   updateUser: (user: AuthUser | null) => void;
 }
@@ -63,6 +65,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     window.location.assign("/auth/google");
   }, []);
 
+  const signInWithEmail = useCallback(async (email: string, password: string) => {
+    const response = await fetch("/auth/login", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ email, password }),
+    });
+
+    const payload = (await response.json()) as { message?: string };
+    if (!response.ok) {
+      throw new Error(payload.message ?? "Failed to sign in");
+    }
+
+    await refreshSession();
+  }, [refreshSession]);
+
+  const registerWithEmail = useCallback(async (email: string, password: string, name?: string) => {
+    const response = await fetch("/auth/register", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ email, password, name }),
+    });
+
+    const payload = (await response.json()) as { message?: string };
+    if (!response.ok) {
+      throw new Error(payload.message ?? "Failed to register");
+    }
+
+    await refreshSession();
+  }, [refreshSession]);
+
   const signOut = useCallback(async () => {
     try {
       await fetch("/auth/logout", {
@@ -86,6 +124,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         refreshSession,
         signInWithGoogle,
+        signInWithEmail,
+        registerWithEmail,
         signOut,
         updateUser,
       }}

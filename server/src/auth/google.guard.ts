@@ -5,14 +5,7 @@ import type { Request } from "express";
 @Injectable()
 export class GoogleAuthGuard extends AuthGuard("google") {
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const activated = (await super.canActivate(context)) as boolean;
-    const request = context.switchToHttp().getRequest<Request>();
-
-    if (activated && request.path.includes("/callback")) {
-      await super.logIn(request);
-    }
-
-    return activated;
+    return (await super.canActivate(context)) as boolean;
   }
 
   getAuthenticateOptions(context: ExecutionContext) {
@@ -21,10 +14,13 @@ export class GoogleAuthGuard extends AuthGuard("google") {
 
     if (request.path.includes("/callback")) {
       return {
+        session: false,
         failureRedirect: `${clientUrl}/login?error=Google%20authentication%20failed`,
       };
     }
 
-    return undefined;
+    return {
+      session: false,
+    };
   }
 }

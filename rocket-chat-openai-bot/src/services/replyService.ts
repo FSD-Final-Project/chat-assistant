@@ -1,7 +1,6 @@
 import OpenAI from "openai";
 
-import type { BotConfig } from "../types/bot.js";
-import { ContextStore } from "./contextStore.js";
+import type { BotConfig, ContextEntry } from "../types/bot.js";
 
 function isTodoListMessage(text: string): boolean {
   const normalized = text.toLowerCase();
@@ -41,25 +40,22 @@ function buildStyleMirrorInstruction(userSamples: string[]): string {
 export class ReplyService {
   private readonly openai: OpenAI;
 
-  constructor(
-    private readonly config: BotConfig,
-    private readonly contextStore: ContextStore
-  ) {
+  constructor(private readonly config: BotConfig) {
     this.openai = new OpenAI({ apiKey: config.openAiApiKey });
   }
 
-  async generateReply(roomId: string, incomingText: string): Promise<string> {
+  async generateReply(
+    incomingText: string,
+    context: ContextEntry[]
+  ): Promise<string> {
     const userText = this.config.botTriggerPrefix
       ? incomingText.trim().slice(this.config.botTriggerPrefix.length).trim()
       : incomingText.trim();
 
     if (isTodoListMessage(userText)) {
-      this.contextStore.push(roomId, "user", userText);
-      this.contextStore.push(roomId, "assistant", "noted");
       return "noted";
     }
 
-    const context = this.contextStore.get(roomId);
     const styleMessages = this.config.mirrorUserStyle
       ? context
           .filter((entry) => entry.role === "user")
@@ -95,8 +91,6 @@ export class ReplyService {
       throw new Error("OpenAI response did not contain text output");
     }
 
-    this.contextStore.push(roomId, "user", userText);
-    this.contextStore.push(roomId, "assistant", output);
     return output;
   }
 }

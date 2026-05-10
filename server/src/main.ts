@@ -1,8 +1,9 @@
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
-import session from "express-session";
 import passport from "passport";
 import { AppModule } from "./app.module";
+import { AuthService } from "./auth/auth.service";
+import { createAuthMiddleware } from "./auth/auth.middleware";
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -22,21 +23,8 @@ async function bootstrap() {
     credentials: true,
   });
 
-  app.use(
-    session({
-      name: process.env.SESSION_COOKIE_NAME ?? "chat_assistant_session",
-      secret: getRequiredEnv("SESSION_SECRET"),
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: process.env.SESSION_COOKIE_SECURE === "true",
-      },
-    }),
-  );
   app.use(passport.initialize());
-  app.use(passport.session());
+  app.use(createAuthMiddleware(app.get(AuthService)));
 
   const port = Number.parseInt(process.env.PORT ?? "3001", 10);
   await app.listen(port);

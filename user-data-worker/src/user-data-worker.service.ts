@@ -11,6 +11,12 @@ interface RocketSubscriptionPayload {
   _id?: string;
   rid?: string;
   t?: string;
+  _updatedAt?: string | { $date?: number };
+  [key: string]: unknown;
+}
+
+interface RocketSubscriptionRemovalPayload {
+  _id?: string;
   [key: string]: unknown;
 }
 
@@ -22,6 +28,7 @@ interface RocketMessagePayload {
 
 interface RocketSubscriptionsResponse {
   update?: RocketSubscriptionPayload[];
+  remove?: RocketSubscriptionRemovalPayload[];
 }
 
 interface RocketHistoryResponse {
@@ -32,46 +39,136 @@ interface RocketHistoryResponse {
 export class UserDataWorkerService {
   private readonly logger = new Logger(UserDataWorkerService.name);
   private readonly roomWatermarks = new Map<string, Map<string, Date>>();
+  private readonly incrementalSubscriptionWatermarks = new Map<string, Date>();
   private nextRocketRequestAt = 0;
+  private fullSyncIteration = 0;
+  private incrementalSyncIteration = 0;
 
   async start(): Promise<void> {
-    this.logger.log(`Starting user data worker loop (${this.pollIntervalMs} ms)`);
+    this.logger.log(
+      `Starting user data worker loops (full=${this.fullSubscriptionsSyncIntervalMs} ms, incremental=${this.incrementalSubscriptionsSyncIntervalMs} ms)`,
+    );
 
+    await Promise.all([
+      this.runFullSubscriptionsLoop(),
+      this.runIncrementalSubscriptionsLoop(),
+    ]);
+  }
+
+  private async runFullSubscriptionsLoop(): Promise<void> {
     while (true) {
       try {
+        this.fullSyncIteration += 1;
+        this.logger.log(`Full sync ${this.fullSyncIteration}: starting cycle`);
         const integrations = await this.fetchIntegrations();
+        this.logger.log(
+          `Full sync ${this.fullSyncIteration}: fetched ${integrations.length} integrated user(s)`,
+        );
+
         for (const integration of integrations) {
-          await this.syncUser(integration);
+          await this.runFullSubscriptionSyncForUser(integration);
         }
+
+        this.logger.log(`Full sync ${this.fullSyncIteration}: cycle completed`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.logger.error(`Worker loop failed: ${message}`);
+        this.logger.error(`Full sync ${this.fullSyncIteration}: failed: ${message}`);
       }
 
-      await this.sleep(this.pollIntervalMs);
+      await this.sleep(this.fullSubscriptionsSyncIntervalMs);
     }
   }
 
-  private async syncUser(integration: RocketIntegrationIdentity): Promise<void> {
+  private async runIncrementalSubscriptionsLoop(): Promise<void> {
+    while (true) {
+      try {
+        this.incrementalSyncIteration += 1;
+        this.logger.log(`Incremental sync ${this.incrementalSyncIteration}: starting cycle`);
+        const integrations = await this.fetchIntegrations();
+        this.logger.log(
+          `Incremental sync ${this.incrementalSyncIteration}: fetched ${integrations.length} integrated user(s)`,
+        );
+
+        for (const integration of integrations) {
+          await this.runIncrementalSubscriptionSyncForUser(integration);
+        }
+
+        this.logger.log(`Incremental sync ${this.incrementalSyncIteration}: cycle completed`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Incremental sync ${this.incrementalSyncIteration}: failed: ${message}`);
+      }
+
+      await this.sleep(this.incrementalSubscriptionsSyncIntervalMs);
+    }
+  }
+
+  private async runFullSubscriptionSyncForUser(
+    integration: RocketIntegrationIdentity,
+  ): Promise<void> {
+    this.logger.log(`Full sync ${this.fullSyncIteration}: syncing all subscriptions for ${integration.email}`);
     const subscriptionsResponse = await this.requestRocket<RocketSubscriptionsResponse>(
       integration,
       "/api/v1/subscriptions.get",
     );
 
     const subscriptions = subscriptionsResponse.update ?? [];
+    this.logger.log(
+      `Full sync ${this.fullSyncIteration}: ${integration.email} returned ${subscriptions.length} full subscription(s)`,
+    );
+
+    await this.postToMainServer("/users/internal/rocket-sync/subscriptions", {
+      googleId: integration.googleId,
+      email: integration.email,
+      mode: "full",
+      subscriptions,
+    });
+
     if (subscriptions.length === 0) {
       return;
     }
 
-    for (const batch of this.chunkItems(subscriptions, this.mainServerBatchSize)) {
-      await this.postToMainServer("/users/internal/rocket-sync/subscriptions", {
-        googleId: integration.googleId,
-        email: integration.email,
-        subscriptions: batch,
-      });
+    const latestUpdatedAt = this.getLatestSubscriptionTimestamp(subscriptions);
+    if (latestUpdatedAt) {
+      this.incrementalSubscriptionWatermarks.set(integration.googleId, latestUpdatedAt);
+    }
+  }
+
+  private async runIncrementalSubscriptionSyncForUser(
+    integration: RocketIntegrationIdentity,
+  ): Promise<void> {
+    const updatedSince = this.incrementalSubscriptionWatermarks.get(integration.googleId);
+    this.logger.log(
+      `Incremental sync ${this.incrementalSyncIteration}: syncing subscription delta for ${integration.email}${updatedSince ? ` since ${updatedSince.toISOString()}` : ""}`,
+    );
+
+    const params = new URLSearchParams();
+    if (updatedSince) {
+      params.set("updatedSince", updatedSince.toISOString());
     }
 
-    for (const subscription of subscriptions) {
+    const path = params.size > 0 ? `/api/v1/subscriptions.get?${params.toString()}` : "/api/v1/subscriptions.get";
+    const subscriptionsResponse = await this.requestRocket<RocketSubscriptionsResponse>(
+      integration,
+      path,
+    );
+
+    const updatedSubscriptions = subscriptionsResponse.update ?? [];
+    const removedSubscriptionIds = (subscriptionsResponse.remove ?? [])
+      .map((subscription) => subscription._id)
+      .filter((subscriptionId): subscriptionId is string => typeof subscriptionId === "string");
+
+    this.logger.log(
+      `Incremental sync ${this.incrementalSyncIteration}: ${integration.email} returned ${updatedSubscriptions.length} update(s) and ${removedSubscriptionIds.length} removal(s)`,
+    );
+
+    await this.postSubscriptionDelta(
+      integration,
+      updatedSubscriptions,
+      removedSubscriptionIds,
+    );
+
+    for (const subscription of updatedSubscriptions) {
       if (!subscription.rid) {
         continue;
       }
@@ -82,6 +179,39 @@ export class UserDataWorkerService {
         typeof subscription.t === "string" ? subscription.t : undefined,
       );
     }
+
+    const latestUpdatedAt = this.getLatestSubscriptionTimestamp(updatedSubscriptions);
+    if (latestUpdatedAt) {
+      this.incrementalSubscriptionWatermarks.set(integration.googleId, latestUpdatedAt);
+    }
+  }
+
+  private async postSubscriptionDelta(
+    integration: RocketIntegrationIdentity,
+    updatedSubscriptions: RocketSubscriptionPayload[],
+    removedSubscriptionIds: string[],
+  ): Promise<void> {
+    if (updatedSubscriptions.length === 0) {
+      await this.postToMainServer("/users/internal/rocket-sync/subscriptions", {
+        googleId: integration.googleId,
+        email: integration.email,
+        mode: "delta",
+        subscriptions: [],
+        removedSubscriptionIds,
+      });
+      return;
+    }
+
+    for (const batch of this.chunkItems(updatedSubscriptions, this.mainServerBatchSize)) {
+      await this.postToMainServer("/users/internal/rocket-sync/subscriptions", {
+        googleId: integration.googleId,
+        email: integration.email,
+        mode: "delta",
+        subscriptions: batch,
+        removedSubscriptionIds,
+      });
+      removedSubscriptionIds = [];
+    }
   }
 
   private async syncRoomMessages(
@@ -91,6 +221,9 @@ export class UserDataWorkerService {
   ): Promise<void> {
     let oldest = this.getRoomWatermark(integration.googleId, roomId);
     const endpoint = this.resolveHistoryEndpoint(roomType);
+    this.logger.log(
+      `Incremental sync ${this.incrementalSyncIteration}: syncing room ${roomId} (${roomType ?? "d"}) for ${integration.email}`,
+    );
 
     while (true) {
       const params = new URLSearchParams({
@@ -109,8 +242,15 @@ export class UserDataWorkerService {
 
       const messages = history.messages ?? [];
       if (messages.length === 0) {
+        this.logger.log(
+          `Incremental sync ${this.incrementalSyncIteration}: no new messages for room ${roomId} (${integration.email})`,
+        );
         break;
       }
+
+      this.logger.log(
+        `Incremental sync ${this.incrementalSyncIteration}: fetched ${messages.length} message(s) for room ${roomId} (${integration.email})`,
+      );
 
       for (const batch of this.chunkItems(messages, this.mainServerBatchSize)) {
         await this.postToMainServer("/users/internal/rocket-sync/messages", {
@@ -220,6 +360,41 @@ export class UserDataWorkerService {
     }
   }
 
+  private getLatestSubscriptionTimestamp(subscriptions: RocketSubscriptionPayload[]): Date | null {
+    let latestTimestamp: Date | null = null;
+
+    for (const subscription of subscriptions) {
+      const timestamp = this.getSubscriptionUpdatedAt(subscription);
+      if (!timestamp) {
+        continue;
+      }
+
+      if (!latestTimestamp || timestamp.getTime() > latestTimestamp.getTime()) {
+        latestTimestamp = timestamp;
+      }
+    }
+
+    return latestTimestamp;
+  }
+
+  private getSubscriptionUpdatedAt(subscription: RocketSubscriptionPayload): Date | null {
+    const updatedAt = subscription._updatedAt;
+    if (!updatedAt) {
+      return null;
+    }
+
+    if (typeof updatedAt === "string") {
+      const parsed = new Date(updatedAt);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
+    if (typeof updatedAt.$date === "number") {
+      return new Date(updatedAt.$date);
+    }
+
+    return null;
+  }
+
   private getMessageDate(message?: RocketMessagePayload): Date | null {
     if (!message?.ts) {
       return null;
@@ -276,8 +451,12 @@ export class UserDataWorkerService {
     return value.replace(/\/$/, "");
   }
 
-  private get pollIntervalMs(): number {
-    return this.getPositiveInt("POLL_INTERVAL_MS", 30000);
+  private get fullSubscriptionsSyncIntervalMs(): number {
+    return this.getPositiveInt("FULL_SUBSCRIPTIONS_SYNC_INTERVAL_MS", 3600000);
+  }
+
+  private get incrementalSubscriptionsSyncIntervalMs(): number {
+    return this.getPositiveInt("INCREMENTAL_SUBSCRIPTIONS_SYNC_INTERVAL_MS", 900000);
   }
 
   private get rcRequestIntervalMs(): number {
