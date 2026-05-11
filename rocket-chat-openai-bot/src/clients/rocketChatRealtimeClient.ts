@@ -8,6 +8,8 @@ type MessageHandler = (
   message: RocketChatMessage,
 ) => Promise<void> | void;
 
+type SubscriptionsChangedHandler = () => Promise<ManagedSubscription[]> | ManagedSubscription[];
+
 interface DdpConnectMessage {
   msg: "connect";
   version: string;
@@ -50,15 +52,10 @@ export class RocketChatRealtimeClient {
   async run(
     subscriptions: ManagedSubscription[],
     onMessage: MessageHandler,
+    onSubscriptionsChanged?: SubscriptionsChangedHandler,
   ): Promise<void> {
-    if (subscriptions.length === 0) {
-      console.log(
-        `[${this.auth.email ?? this.auth.googleId}] No managed subscriptions available for realtime listening.`,
-      );
-      return;
-    }
-
     const roomMap = new Map(subscriptions.map((subscription) => [subscription.roomId, subscription]));
+    let isRefreshingSubscriptions = false;
     const socketUrl = this.getWebSocketUrl();
     const socket = new WebSocket(socketUrl);
     this.socket = socket;
@@ -142,13 +139,51 @@ export class RocketChatRealtimeClient {
 
         if (
           payload.msg === "changed" &&
+          payload.collection === "stream-notify-user" &&
+          this.isChangedFields(payload.fields) &&
+          payload.fields.eventName === `${this.auth.userId}/subscriptions-changed`
+        ) {
+          if (onSubscriptionsChanged && !isRefreshingSubscriptions) {
+            isRefreshingSubscriptions = true;
+            void Promise.resolve(onSubscriptionsChanged())
+              .then(async (nextSubscriptions) => {
+                for (const subscription of nextSubscriptions) {
+                  if (roomMap.has(subscription.roomId)) {
+                    roomMap.set(subscription.roomId, subscription);
+                    continue;
+                  }
+
+                  await this.subscribeToRoomMessages(subscription.roomId);
+                  roomMap.set(subscription.roomId, subscription);
+                  console.log(
+                    `[${this.auth.email ?? this.auth.googleId}] Realtime listener added new subscription ${subscription.roomId}.`,
+                  );
+                }
+              })
+              .catch((error) => {
+                console.error(
+                  `[${this.auth.email ?? this.auth.googleId}] Failed to refresh subscriptions after Rocket.Chat change: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`,
+                );
+              })
+              .finally(() => {
+                isRefreshingSubscriptions = false;
+              });
+          }
+          return;
+        }
+
+        if (
+          payload.msg === "changed" &&
           payload.collection === "stream-room-messages" &&
           this.isChangedFields(payload.fields)
         ) {
-          const subscription = roomMap.get(payload.fields.eventName);
           const message = Array.isArray(payload.fields.args)
             ? (payload.fields.args[0] as RocketChatMessage | undefined)
             : undefined;
+          const roomId = message?.rid ?? payload.fields.eventName;
+          const subscription = roomMap.get(roomId);
 
           if (subscription && message) {
             void onMessage(subscription, message);
@@ -175,13 +210,14 @@ export class RocketChatRealtimeClient {
 
     await connectedPromise;
     await this.loginWithResumeToken();
+    await this.subscribeToSubscriptionChanges();
 
     for (const subscription of subscriptions) {
       await this.subscribeToRoomMessages(subscription.roomId);
     }
 
     console.log(
-      `[${this.auth.email ?? this.auth.googleId}] Realtime listener active for ${subscriptions.length} subscription(s).`,
+      `[${this.auth.email ?? this.auth.googleId}] Realtime listener active for ${subscriptions.length} subscription(s) and subscription changes.`,
     );
 
     await closePromise;
@@ -194,6 +230,10 @@ export class RocketChatRealtimeClient {
 
   private async subscribeToRoomMessages(roomId: string): Promise<void> {
     await this.subscribe("stream-room-messages", [roomId, false]);
+  }
+
+  private async subscribeToSubscriptionChanges(): Promise<void> {
+    await this.subscribe("stream-notify-user", [`${this.auth.userId}/subscriptions-changed`, false]);
   }
 
   private async callMethod(method: string, params: unknown[]): Promise<void> {
