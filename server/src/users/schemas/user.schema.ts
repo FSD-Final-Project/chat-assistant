@@ -83,8 +83,8 @@ export class User {
   @Prop({ required: true, enum: ["google", "local"], default: "google" })
   authProvider!: "google" | "local";
 
-  @Prop({ type: LocalAuth, default: null })
-  localAuth?: LocalAuth | null;
+  @Prop({ type: LocalAuth, default: {} })
+  localAuth?: LocalAuth;
 
   @Prop({ type: RocketIntegration, default: null })
   rocketIntegration?: RocketIntegration | null;

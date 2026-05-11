@@ -22,6 +22,9 @@ export class RocketMessageRecord {
 
   @Prop({ type: MongooseSchema.Types.Mixed, required: true })
   payload!: Record<string, unknown>;
+
+  @Prop({ default: false, index: true })
+  isChunked!: boolean;
 }
 
 export const RocketMessageSchema = SchemaFactory.createForClass(RocketMessageRecord);

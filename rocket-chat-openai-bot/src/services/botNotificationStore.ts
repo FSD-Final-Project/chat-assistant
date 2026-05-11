@@ -39,10 +39,56 @@ export class BotNotificationStore {
         suggestedReply: input.suggestedReply,
       }),
     });
+  }
+
+  async saveSuggestion(input: {
+    auth: RocketChatAuth;
+    roomId: string;
+    messageId: string;
+    suggestion: string;
+  }): Promise<void> {
+    const response = await fetch(`${this.config.mainServerUrl}/users/internal/message-suggestions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Api-Key": this.config.internalApiKey,
+      },
+      body: JSON.stringify({
+        googleId: input.auth.googleId,
+        roomId: input.roomId,
+        messageId: input.messageId,
+        suggestion: input.suggestion,
+      }),
+    });
 
     if (!response.ok) {
       const message = await response.text();
-      throw new Error(`Failed to persist bot notification: ${response.status} ${message}`);
+      throw new Error(`Failed to save message suggestion: ${response.status} ${message}`);
+    }
+  }
+
+  async postMessage(input: {
+    auth: RocketChatAuth;
+    roomId: string;
+    text: string;
+  }): Promise<void> {
+    const response = await fetch(`${this.config.mainServerUrl}/users/internal/bot-post-message`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Api-Key": this.config.internalApiKey,
+      },
+      body: JSON.stringify({
+        googleId: input.auth.googleId,
+        email: input.auth.email,
+        roomId: input.roomId,
+        text: input.text,
+      }),
+    });
+
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(`Failed to post message via server: ${response.status} ${message}`);
     }
   }
 }
