@@ -4,9 +4,12 @@ import { AppModule } from "./app.module";
 import { UserDataWorkerService } from "./user-data-worker.service";
 
 async function bootstrap() {
-  const app = await NestFactory.createApplicationContext(AppModule);
+  const app = await NestFactory.create(AppModule);
+  const port = Number.parseInt(process.env.PORT ?? "3002", 10);
+  await app.listen(port);
+
   const worker = app.get(UserDataWorkerService);
-  await worker.start();
+  void worker.start();
 }
 
 void bootstrap();

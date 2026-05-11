@@ -11,8 +11,32 @@ export class RocketIntegration {
   @Prop()
   encryptedUserId?: string;
 
+  @Prop({ enum: ["pending", "syncing", "completed", "failed"], default: "pending" })
+  syncStatus?: "pending" | "syncing" | "completed" | "failed";
+
+  @Prop()
+  syncStartedAt?: Date;
+
+  @Prop()
+  syncCompletedAt?: Date;
+
+  @Prop()
+  syncError?: string;
+
   @Prop()
   updatedAt?: Date;
+}
+
+@Schema({ _id: false, versionKey: false })
+export class LocalAuth {
+  @Prop()
+  passwordHash?: string;
+
+  @Prop()
+  refreshTokenHash?: string;
+
+  @Prop()
+  refreshTokenExpiresAt?: Date;
 }
 
 @Schema({ timestamps: true })
@@ -20,7 +44,7 @@ export class User {
   @Prop({ required: true, unique: true, index: true })
   googleId!: string;
 
-  @Prop({ required: true, index: true })
+  @Prop({ required: true, unique: true, index: true })
   email!: string;
 
   @Prop({ required: true })
@@ -34,6 +58,12 @@ export class User {
 
   @Prop()
   picture?: string;
+
+  @Prop({ required: true, enum: ["google", "local"], default: "google" })
+  authProvider!: "google" | "local";
+
+  @Prop({ type: LocalAuth, default: null })
+  localAuth?: LocalAuth | null;
 
   @Prop({ type: RocketIntegration, default: null })
   rocketIntegration?: RocketIntegration | null;

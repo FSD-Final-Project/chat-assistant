@@ -13,13 +13,28 @@ interface GoogleProfileUserInput {
   picture?: string;
 }
 
+interface LocalUserInput {
+  id: string;
+  email: string;
+  name: string;
+  passwordHash: string;
+}
+
+type RocketSyncStatus = "pending" | "syncing" | "completed" | "failed";
+
 @Injectable()
 export class UsersService {
   constructor(@InjectModel(User.name) private readonly userModel: Model<UserDocument>) {}
 
   async upsertGoogleUser(input: GoogleProfileUserInput): Promise<UserDocument> {
+    const existingUser = await this.userModel.findOne({
+      $or: [{ googleId: input.id }, { email: input.email }],
+    });
+
     const user = await this.userModel.findOneAndUpdate(
-      { googleId: input.id },
+      existingUser
+        ? { _id: existingUser._id }
+        : { googleId: input.id },
       {
         $set: {
           email: input.email,
@@ -27,8 +42,7 @@ export class UsersService {
           givenName: input.givenName,
           familyName: input.familyName,
           picture: input.picture,
-        },
-        $setOnInsert: {
+          authProvider: "google",
           googleId: input.id,
         },
       },
@@ -38,6 +52,20 @@ export class UsersService {
     if (!user) {
       throw new Error("Failed to upsert user");
     }
+
+    return user;
+  }
+
+  async createLocalUser(input: LocalUserInput): Promise<UserDocument> {
+    const user = await this.userModel.create({
+      googleId: input.id,
+      email: input.email,
+      name: input.name,
+      authProvider: "local",
+      localAuth: {
+        passwordHash: input.passwordHash,
+      },
+    });
 
     return user;
   }
@@ -65,8 +93,76 @@ export class UsersService {
           rocketIntegration: {
             encryptedUserToken: this.encrypt(rocketUserToken),
             encryptedUserId: this.encrypt(rocketUserId),
+            syncStatus: "pending",
+            syncStartedAt: undefined,
+            syncCompletedAt: undefined,
+            syncError: undefined,
             updatedAt: new Date(),
           },
+        },
+      },
+      { new: true },
+    );
+  }
+
+  async updateRocketSyncStatus(
+    googleId: string,
+    status: RocketSyncStatus,
+    error?: string,
+  ): Promise<UserDocument | null> {
+    const now = new Date();
+    return this.userModel.findOneAndUpdate(
+      { googleId },
+      {
+        $set: {
+          "rocketIntegration.syncStatus": status,
+          "rocketIntegration.updatedAt": now,
+          ...(status === "syncing" ? { "rocketIntegration.syncStartedAt": now } : {}),
+          ...(status === "completed" ? { "rocketIntegration.syncCompletedAt": now } : {}),
+          ...(status === "failed" && error ? { "rocketIntegration.syncError": error } : {}),
+        },
+        ...(status === "syncing" || status === "completed"
+          ? { $unset: { "rocketIntegration.syncError": "" } }
+          : {}),
+      },
+      { new: true },
+    );
+  }
+
+  async saveRefreshToken(googleId: string, refreshTokenHash: string, refreshTokenExpiresAt: Date): Promise<void> {
+    await this.userModel.updateOne(
+      { googleId },
+      {
+        $set: {
+          "localAuth.refreshTokenHash": refreshTokenHash,
+          "localAuth.refreshTokenExpiresAt": refreshTokenExpiresAt,
+        },
+      },
+    );
+  }
+
+  async clearRefreshToken(googleId: string): Promise<void> {
+    await this.userModel.updateOne(
+      { googleId },
+      {
+        $unset: {
+          "localAuth.refreshTokenHash": "",
+          "localAuth.refreshTokenExpiresAt": "",
+        },
+      },
+    );
+  }
+
+  async clearRocketIntegration(googleId: string): Promise<UserDocument | null> {
+    return this.userModel.findOneAndUpdate(
+      { googleId },
+      {
+        $unset: {
+          "rocketIntegration.encryptedUserToken": "",
+          "rocketIntegration.encryptedUserId": "",
+        },
+        $set: {
+          "rocketIntegration.updatedAt": new Date(),
         },
       },
       { new: true },
