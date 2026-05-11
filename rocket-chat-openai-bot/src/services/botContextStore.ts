@@ -10,6 +10,7 @@ interface BotContextResponse {
   subscription?: ManagedSubscription;
   currentSummary?: BotContextPayload["currentSummary"];
   relevantSummaries?: BotContextPayload["relevantSummaries"];
+  suggestedReply?: string;
   context?: BotContextPayload["context"];
 }
 
@@ -39,6 +40,7 @@ export class BotContextStore {
         contextLimit: this.config.maxContextMessages,
         queryEmbedding,
         message,
+        includeSuggestion: true,
       }),
     });
 
@@ -58,6 +60,7 @@ export class BotContextStore {
       subscription: payload.subscription,
       currentSummary: payload.currentSummary ?? null,
       relevantSummaries: payload.relevantSummaries ?? [],
+      suggestedReply: payload.suggestedReply,
     };
   }
 

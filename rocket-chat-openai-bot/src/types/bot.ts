@@ -42,6 +42,7 @@ export interface BotContextPayload {
   subscription: ManagedSubscription;
   currentSummary: SummaryContextItem | null;
   relevantSummaries: SummaryContextItem[];
+  suggestedReply?: string;
   context?: ContextEntry[];
 }
 

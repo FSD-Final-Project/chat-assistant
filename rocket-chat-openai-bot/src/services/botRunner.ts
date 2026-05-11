@@ -138,29 +138,7 @@ export class BotRunner {
         `[${activeSubscription.roomId}] ${contextPayload.subscription.preferenceColor.toUpperCase()} User: ${incomingText}`,
       );
 
-      let lastSuggestedReplyUpdateAt = 0;
-      let lastSuggestedReplyText = "";
-      const suggestedReply = await this.replyService.generateReply(
-        incomingText,
-        contextPayload.currentSummary,
-        contextPayload.relevantSummaries,
-        shouldCreateNotification
-          ? async (partialReply) => {
-              const now = Date.now();
-              if (
-                partialReply !== lastSuggestedReplyText &&
-                (now - lastSuggestedReplyUpdateAt >= 200 || partialReply.length - lastSuggestedReplyText.length >= 24)
-              ) {
-                lastSuggestedReplyText = partialReply;
-                lastSuggestedReplyUpdateAt = now;
-              } else {
-                return;
-              }
-
-              await this.updateSuggestedReplyNotification(activeSubscription, message, senderName, incomingText, partialReply);
-            }
-          : undefined,
-      );
+      const suggestedReply = contextPayload.suggestedReply || "I'm sorry, I couldn't generate a suggestion.";
 
       if (contextPayload.subscription.preferenceColor === "green") {
         const postedMessage = await this.rocketChatClient.postMessage(activeSubscription.roomId, suggestedReply);

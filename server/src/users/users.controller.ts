@@ -49,6 +49,7 @@ interface InternalBotContextBody {
   contextLimit?: number;
   queryEmbedding?: number[];
   message?: Record<string, unknown>;
+  includeSuggestion?: boolean;
 }
 
 interface InternalMessageSuggestionBody {
@@ -944,7 +945,35 @@ export class UsersController {
       },
       currentSummary: currentSummary ? this.mapSummaryContext(currentSummary) : null,
       relevantSummaries,
+      suggestedReply:
+        body.includeSuggestion && messageId
+          ? await this.getOrCreateBotSuggestion(googleId, roomId, messageId, message.msg as string, {
+              currentSummary: currentSummary?.summary,
+              relevantSummaries: relevantSummaries.map((s) => ({ roomId: s.roomId, summary: s.summary })),
+            })
+          : undefined,
     });
+  }
+
+  private async getOrCreateBotSuggestion(
+    googleId: string,
+    roomId: string,
+    messageId: string,
+    messageText: string,
+    context: any,
+  ): Promise<string> {
+    const cached = await this.embeddingService.findCachedSuggestion(googleId, messageId);
+    if (cached) return cached;
+
+    const suggestion = await this.embeddingService.getAutoReplySuggestion(
+      googleId,
+      roomId,
+      messageText,
+      context,
+    );
+
+    await this.embeddingService.saveSuggestion(googleId, roomId, messageId, suggestion);
+    return suggestion;
   }
 
   @Post("me/rocket-integration")

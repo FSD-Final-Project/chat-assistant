@@ -322,10 +322,10 @@ export class EmbeddingService {
       relevantSummaries?: Array<{ roomId: string; summary: string }>;
     },
   ): Promise<string> {
-    let contextText = "";
+    const sections: string[] = [];
 
+    // 1. Add Summary Context
     if (context) {
-      const sections: string[] = [];
       if (context.currentSummary) {
         sections.push(`Current conversation summary:\n${context.currentSummary}`);
       }
@@ -337,39 +337,53 @@ export class EmbeddingService {
           ].join("\n"),
         );
       }
-      contextText = sections.join("\n\n").trim();
-    } else {
-      // Fallback to legacy retrieval if no context provided
-      const queryVector = await this.generateEmbedding(messageText);
-      const last5Minutes = new Date(Date.now() - 5 * 60 * 1000);
-      let vectorResults: any[] = [];
-      try {
-        vectorResults = await this.chunkModel.aggregate([
-          {
-            $vectorSearch: {
-              index: "vector_index",
-              path: "embedding",
-              queryVector: queryVector,
-              numCandidates: 100,
-              limit: 5,
-              filter: { appUserGoogleId },
-            },
-          },
-        ]);
-      } catch (error: any) {
-        this.logger.warn(`Vector search failed: ${error.message}`);
-      }
-
-      const recentResults = await this.chunkModel.find({
-        appUserGoogleId,
-        roomId,
-        startTime: { $gte: last5Minutes },
-      });
-
-      contextText = [...vectorResults, ...recentResults]
-        .map((chunk) => this.formatChunkForEmbedding(chunk.messages))
-        .join("\n---\n");
     }
+
+    // 2. Add Chunk Context (Vector Search)
+    try {
+      const queryVector = await this.generateEmbedding(messageText);
+      const vectorResults = await this.chunkModel.aggregate([
+        {
+          $vectorSearch: {
+            index: "vector_index",
+            path: "embedding",
+            queryVector: queryVector,
+            numCandidates: 100,
+            limit: 5,
+            filter: { appUserGoogleId },
+          },
+        },
+      ]);
+
+      if (vectorResults.length > 0) {
+        sections.push(
+          [
+            "Relevant historical conversation snippets (specific facts):",
+            ...vectorResults.map((chunk) => this.formatChunkForEmbedding(chunk.messages)),
+          ].join("\n---\n"),
+        );
+      }
+    } catch (error: any) {
+      this.logger.warn(`Vector search failed during suggestion: ${error.message}`);
+      // If no summaries and vector search failed, fallback to recent chunks
+      if (!context) {
+        const last5Minutes = new Date(Date.now() - 5 * 60 * 1000);
+        const recentResults = await this.chunkModel.find({
+          appUserGoogleId,
+          roomId,
+          startTime: { $gte: last5Minutes },
+        });
+        if (recentResults.length > 0) {
+          sections.push(
+            recentResults
+              .map((chunk) => this.formatChunkForEmbedding(chunk.messages))
+              .join("\n---\n")
+          );
+        }
+      }
+    }
+
+    const contextText = sections.join("\n\n").trim();
 
     const systemPrompt = [
       "You are a helpful Rocket.Chat assistant helping a user reply to messages.",
