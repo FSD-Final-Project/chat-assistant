@@ -9,6 +9,10 @@ export class SubscriptionPreferenceStore {
   constructor(private readonly config: BotConfig) {}
 
   async loadManagedSubscriptions(auth: RocketChatAuth): Promise<ManagedSubscription[]> {
+    if (!auth.googleId) {
+      throw new Error(`Cannot load managed subscriptions without googleId for '${auth.email ?? auth.userId}'`);
+    }
+
     const params = new URLSearchParams({
       googleId: auth.googleId,
     });

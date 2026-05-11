@@ -4,20 +4,23 @@ import path from 'path';
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
-  server: {
-    host: '::',
-    port: 8080,
-    proxy: {
-      '/auth': {
-        target: 'http://localhost:3001',
-        changeOrigin: true,
+  server: (() => {
+    const apiTarget = process.env.VITE_API_TARGET ?? "http://localhost:3001";
+    return {
+      host: "::",
+      port: 8080,
+      proxy: {
+        "/auth": {
+          target: apiTarget,
+          changeOrigin: true,
+        },
+        "/users": {
+          target: apiTarget,
+          changeOrigin: true,
+        },
       },
-      '/users': {
-        target: 'http://localhost:3001',
-        changeOrigin: true,
-      },
-    },
-  },
+    };
+  })(),
   plugins: [react()],
   resolve: {
     alias: {

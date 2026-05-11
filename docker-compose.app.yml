@@ -1,0 +1,133 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: chat-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: chat-ollama
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  ollama-model-init:
+    image: ollama/ollama:latest
+    container_name: chat-ollama-model-init
+    depends_on:
+      - ollama
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
+    command: ["/bin/sh", "-c", "ollama pull \"$$OLLAMA_MODEL\""]
+    restart: "no"
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    container_name: chat-server
+    depends_on:
+      - mongo
+    working_dir: /app
+    command: npm run dev:server
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - CLIENT_URL=http://localhost:8080
+      - MONGODB_URI=mongodb://mongo:27017/chat-assistant
+      - RC_URL=${RC_URL:-http://rocketchat:3000}
+      - SESSION_SECRET=${SESSION_SECRET:-change-me-session-secret}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-change-me-internal-key}
+      - ROCKET_CREDENTIALS_ENCRYPTION_KEY=${ROCKET_CREDENTIALS_ENCRYPTION_KEY:-change-me-rocket-crypto-key}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-placeholder.apps.googleusercontent.com}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-placeholder}
+      - GOOGLE_CALLBACK_URL=${GOOGLE_CALLBACK_URL:-http://localhost:3001/auth/google/callback}
+      - SESSION_COOKIE_NAME=chat_assistant_session
+      - SESSION_COOKIE_SECURE=false
+      - MASTER_PASSWORD=${MASTER_PASSWORD:-changeme123}
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    container_name: chat-worker
+    depends_on:
+      - server
+    working_dir: /app
+    command: npm run dev:worker
+    environment:
+      - MAIN_SERVER_URL=http://server:3001
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-change-me-internal-key}
+      - RC_URL=${RC_URL:-http://rocketchat:3000}
+      - POLL_INTERVAL_MS=30000
+      - RC_REQUEST_INTERVAL_MS=500
+      - RC_RETRY_BACKOFF_MS=5000
+      - MAIN_SERVER_BATCH_SIZE=25
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    container_name: chat-bot
+    depends_on:
+      server:
+        condition: service_started
+      ollama:
+        condition: service_started
+      ollama-model-init:
+        condition: service_completed_successfully
+    working_dir: /app
+    command: npm run dev:bot
+    environment:
+      - RC_URL=${RC_URL:-http://rocketchat:3000}
+      - MAIN_SERVER_URL=http://server:3001
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-change-me-internal-key}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=https://api.openai.com/v1
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4.1-mini}
+      - OLLAMA_API_KEY=ollama
+      - OLLAMA_BASE_URL=http://ollama:11434/v1
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
+      - LLM_FALLBACK_TO_OLLAMA=true
+      - SYSTEM_PROMPT=${SYSTEM_PROMPT:-You are a helpful Rocket.Chat assistant.}
+      - POLL_INTERVAL_MS=3000
+      - RC_REQUEST_INTERVAL_MS=400
+      - RC_RETRY_BACKOFF_MS=5000
+      - MAX_CONTEXT_MESSAGES=12
+      - BOT_TRIGGER_PREFIX=
+      - MIRROR_USER_STYLE=true
+      - MIRROR_STYLE_SAMPLE_SIZE=6
+      - SPEAK_AS_USER=true
+    restart: unless-stopped
+
+  client:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    container_name: chat-client
+    depends_on:
+      - server
+    working_dir: /app
+    command: npm run dev:client
+    ports:
+      - "8080:8080"
+    environment:
+      - VITE_DEV_BYPASS_AUTH=false
+      - VITE_API_TARGET=http://server:3001
+    restart: unless-stopped
+
+volumes:
+  mongo_data:
+  ollama_data:

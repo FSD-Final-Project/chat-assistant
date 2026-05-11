@@ -13,15 +13,16 @@ Chat Assistant is a full-stack workspace with:
 - `server/`: NestJS backend for Google OAuth and session auth
 - `user-data-worker/`: NestJS worker for Rocket.Chat data syncing
 - `rocket-chat-openai-bot/`: Rocket.Chat bot service
-- `docker-compose.yml`: local Rocket.Chat container setup
+- `docker-compose.rocket.yml`: local Rocket.Chat container setup
+- `docker-compose.app.yml`: local app stack for MongoDB, Ollama, server, worker, bot, and client
 
 ## Prerequisites
 
 - Node.js 18+
 - npm
 - A Google OAuth client
-- An OpenAI API key
-- A Rocket.Chat server and bot user token
+- A Rocket.Chat server
+- An OpenAI API key, or local Ollama fallback through the app compose stack
 - MongoDB running locally with replica set mode enabled when using the local Rocket.Chat container
 
 ## Root Scripts
@@ -43,9 +44,10 @@ Available scripts:
 - `npm run build` - build the Vite client
 - `npm run build:server` - build the Nest server
 - `npm run build:worker` - build the Nest worker
-- `npm run rocket` - start the local Rocket.Chat container from `docker-compose.yml`
+- `npm run compose:rocket` - start the local Rocket.Chat container from `docker-compose.rocket.yml`
+- `npm run compose:app` - start the app stack from `docker-compose.app.yml`
 
-`npm run dev:all` uses `concurrently`, so make sure root dependencies are installed first.
+`npm run dev:all` starts the local client, server, worker, and bot development processes.
 
 ## Frontend
 
@@ -86,9 +88,15 @@ Required values in `server/.env`:
 ```sh
 PORT=3001
 CLIENT_URL=http://localhost:8080
+USER_DATA_WORKER_URL=http://localhost:3002
 MONGODB_URI=mongodb://127.0.0.1:27017/chat-assistant
+RC_URL=http://localhost:3000
 SESSION_SECRET=replace-this-session-secret
+INTERNAL_API_KEY=replace-this-with-a-long-random-internal-key
 ROCKET_CREDENTIALS_ENCRYPTION_KEY=replace-this-with-a-long-random-secret
+ACCESS_TOKEN_SECRET=replace-this-with-a-long-random-access-secret
+REFRESH_TOKEN_SECRET=replace-this-with-a-long-random-refresh-secret
+REFRESH_TOKEN_HASH_SECRET=replace-this-with-a-long-random-refresh-hash-secret
 GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_CALLBACK_URL=http://localhost:3001/auth/google/callback
@@ -101,8 +109,8 @@ Google OAuth configuration:
 - Authorized JavaScript origin: `http://localhost:3001`
 - Authorized redirect URI: `http://localhost:3001/auth/google/callback`
 
-After Google login, the client sends the user to `Rocket Integration`, where they must provide their Rocket.Chat `user token` and `user id`. Those values are encrypted and stored on the user document in MongoDB.
-The main server no longer pulls Rocket.Chat history itself; the worker service does that over internal HTTPS requests.
+After Google login, the client sends the user to `Rocket Integration`, where they provide their Rocket.Chat `user token` and `user id`. Those values are encrypted and stored on the user document in MongoDB.
+The worker and bot request the integrated Rocket.Chat users from the main server through internal endpoints protected by `INTERNAL_API_KEY`. If Rocket.Chat returns `401`, the app disconnects that integration and clears the stored Rocket.Chat auth fields.
 
 Run only the server:
 
@@ -110,9 +118,30 @@ Run only the server:
 npm run dev:server
 ```
 
+## Docker Compose
+
+This repo has two compose files:
+
+- `docker-compose.rocket.yml` runs a local Rocket.Chat container against MongoDB on your host machine.
+- `docker-compose.app.yml` runs the app services: MongoDB, Ollama, server, worker, bot, and client.
+
+Start local Rocket.Chat:
+
+```sh
+npm run compose:rocket
+```
+
+Start the app stack:
+
+```sh
+npm run compose:app
+```
+
+When both compose files are started from this repo, the app stack defaults to `RC_URL=http://rocketchat:3000` for container-to-container access. For a different Rocket.Chat server, set `RC_URL` in the root `.env` before starting the app stack.
+
 ## Local Rocket.Chat
 
-The root `docker-compose.yml` runs Rocket.Chat on `http://localhost:3000` and connects it to MongoDB running on your host machine.
+The root `docker-compose.rocket.yml` runs Rocket.Chat on `http://localhost:3000` and connects it to MongoDB running on your host machine.
 
 Setup:
 
@@ -149,17 +178,15 @@ After restarting MongoDB, initialize the replica set once with the same host tha
 
 ```js
 rs.initiate({
-  _id: "rs0",
-  members: [
-    { _id: 0, host: "192.168.56.1:27017" }
-  ]
-})
+  _id: 'rs0',
+  members: [{ _id: 0, host: '192.168.56.1:27017' }],
+});
 ```
 
 Start Rocket.Chat:
 
 ```sh
-npm run rocket
+npm run compose:rocket
 ```
 
 ## User Data Worker
@@ -179,11 +206,19 @@ Required values in `user-data-worker/.env`:
 ```sh
 MAIN_SERVER_URL=http://localhost:3001
 INTERNAL_API_KEY=replace-this-with-the-same-internal-key-used-by-server
-RC_URL=https://open.rocket.chat
-POLL_INTERVAL_MS=30000
+RC_URL=http://localhost:3000
+FULL_SUBSCRIPTIONS_SYNC_INTERVAL_MS=3600000
+INCREMENTAL_SUBSCRIPTIONS_SYNC_INTERVAL_MS=900000
 RC_REQUEST_INTERVAL_MS=500
 RC_RETRY_BACKOFF_MS=5000
+MAIN_SERVER_BATCH_SIZE=25
+OPENAI_API_KEY=your-openai-api-key
+SUMMARY_MODEL=gpt-4.1-mini
+EMBEDDING_MODEL=text-embedding-3-small
+SUMMARY_SOURCE_MESSAGE_LIMIT=100
 ```
+
+The worker reconciles Rocket.Chat subscriptions with the app database. When a subscription disappears from Rocket.Chat, the worker removes that subscription and its saved summarization data from the app database. While a sync is pending or running, the preferences page warns the user that the displayed data may be stale.
 
 Run only the worker:
 
@@ -193,7 +228,7 @@ npm run dev:worker
 
 ## Rocket.Chat Bot
 
-The bot lives in `rocket-chat-openai-bot/` and uses token-based Rocket.Chat auth with `X-Auth-Token` and `X-User-Id`.
+The bot lives in `rocket-chat-openai-bot/`. It does not use a single static Rocket.Chat token from `.env`; it asks the main server for every user with a saved Rocket.Chat integration, then starts a runner for each integrated user.
 It ignores existing messages when it first syncs a room, so it only replies to new ones after startup.
 
 Setup:
@@ -207,9 +242,12 @@ cp .env.example .env
 Key bot env values:
 
 - `RC_URL`
-- `ROCKET_USER_TOKEN`
-- `ROCKET_USER_ID`
-- `OPENAI_API_KEY`
+- `MAIN_SERVER_URL`
+- `INTERNAL_API_KEY`
+- `OPENAI_API_KEY`, or Ollama fallback settings
+- `OPENAI_MODEL`
+- `OLLAMA_BASE_URL`
+- `OLLAMA_MODEL`
 
 Run only the bot:
 
@@ -220,6 +258,13 @@ npm run dev:bot
 For full bot configuration, see [rocket-chat-openai-bot/README.md](/c:/Users/guyya/OneDrive/Documents/fsd/chat-assistant/rocket-chat-openai-bot/README.md:1).
 
 ## Full Local Run
+
+For the local Docker path, start Rocket.Chat first and then the app stack:
+
+```sh
+npm run compose:rocket
+npm run compose:app
+```
 
 Start everything together from the repo root:
 
