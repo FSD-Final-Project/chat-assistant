@@ -178,11 +178,9 @@ After restarting MongoDB, initialize the replica set once with the same host tha
 
 ```js
 rs.initiate({
-  _id: "rs0",
-  members: [
-    { _id: 0, host: "192.168.56.1:27017" }
-  ]
-})
+  _id: 'rs0',
+  members: [{ _id: 0, host: '192.168.56.1:27017' }],
+});
 ```
 
 Start Rocket.Chat:

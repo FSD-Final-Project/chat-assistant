@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 
-import type { BotConfig, ContextEntry, SummaryContextItem } from "../types/bot.js";
+import type { BotConfig, SummaryContextItem } from "../types/bot.js";
 
 function isTodoListMessage(text: string): boolean {
   const normalized = text.toLowerCase();
