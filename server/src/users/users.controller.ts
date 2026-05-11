@@ -836,8 +836,11 @@ export class UsersController {
     }
 
     try {
-      const subscriptions = await this.rocketSyncService.listSubscriptions(sessionUser.id);
-      const rocketAuth = await this.usersService.getDecryptedRocketIntegration(sessionUser.id);
+      const [subscriptions, user] = await Promise.all([
+        this.rocketSyncService.listSubscriptions(sessionUser.id),
+        this.usersService.findByGoogleId(sessionUser.id),
+      ]);
+      const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
 
       response.status(200).json({
         myRocketUserId: rocketAuth?.userId,

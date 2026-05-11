@@ -26,6 +26,9 @@ export class RocketSubscriptionRecord {
 
   @Prop({ type: MongooseSchema.Types.Mixed, required: true })
   payload!: Record<string, unknown>;
+
+  createdAt!: Date;
+  updatedAt!: Date;
 }
 
 export const RocketSubscriptionSchema = SchemaFactory.createForClass(RocketSubscriptionRecord);

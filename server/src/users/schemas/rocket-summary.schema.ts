@@ -37,6 +37,9 @@ export class RocketSummaryRecord {
 
   @Prop({ type: Date, index: true })
   expiresAt?: Date;
+
+  createdAt!: Date;
+  updatedAt!: Date;
 }
 
 export const RocketSummarySchema = SchemaFactory.createForClass(RocketSummaryRecord);

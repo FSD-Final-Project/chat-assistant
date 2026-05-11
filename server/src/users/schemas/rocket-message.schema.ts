@@ -25,6 +25,9 @@ export class RocketMessageRecord {
 
   @Prop({ default: false, index: true })
   isChunked!: boolean;
+
+  createdAt!: Date;
+  updatedAt!: Date;
 }
 
 export const RocketMessageSchema = SchemaFactory.createForClass(RocketMessageRecord);

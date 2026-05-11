@@ -23,10 +23,10 @@ interface LocalUserInput {
 type RocketSyncStatus = "pending" | "syncing" | "completed" | "failed";
 
 export interface BotActivationPreferencesInput {
-  timeEnabled: boolean;
-  startTime: string;
-  endTime: string;
-  dateEnabled: boolean;
+  timeEnabled?: boolean;
+  startTime?: string;
+  endTime?: string;
+  dateEnabled?: boolean;
   startDate?: string;
   endDate?: string;
 }
@@ -206,13 +206,16 @@ export class UsersService {
     googleId: string,
     preferences: BotActivationPreferencesInput,
   ): Promise<UserDocument | null> {
+    const update: any = {};
+    for (const [key, value] of Object.entries(preferences)) {
+      if (value !== undefined) {
+        update[`botActivationPreferences.${key}`] = value;
+      }
+    }
+
     return this.userModel.findOneAndUpdate(
       { googleId },
-      {
-        $set: {
-          botActivationPreferences: preferences,
-        },
-      },
+      { $set: update },
       { new: true },
     );
   }
