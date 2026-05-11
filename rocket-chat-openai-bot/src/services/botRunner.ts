@@ -211,31 +211,6 @@ export class BotRunner {
     });
   }
 
-  private async updateSuggestedReplyNotification(
-    subscription: ManagedSubscription,
-    message: RocketChatMessage,
-    senderName: string,
-    incomingText: string,
-    suggestedReply: string,
-  ): Promise<void> {
-    if (!message._id) {
-      return;
-    }
-
-    await this.botNotificationStore.createNotification({
-      auth: this.auth,
-      roomId: subscription.roomId,
-      roomType: subscription.roomType,
-      subscriptionId: subscription.id,
-      messageId: message._id,
-      preferenceColor: subscription.preferenceColor,
-      kind: subscription.preferenceColor === "yellow" ? "approval" : "info",
-      senderName,
-      senderUsername: message.u?.username,
-      incomingText,
-      suggestedReply,
-    });
-  }
 
   private async handleSubscriptionsChanged(): Promise<ManagedSubscription[]> {
     if (this.refreshSubscriptionsPromise) {
