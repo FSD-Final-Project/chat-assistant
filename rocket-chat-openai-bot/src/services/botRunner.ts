@@ -1,65 +1,90 @@
-import type { BotConfig } from "../types/bot.js";
+import type { BotConfig, ManagedSubscription, RocketChatAuth } from "../types/bot.js";
 import type { RocketChatMessage } from "../types/rocketchat.js";
-import { RocketChatClient } from "../clients/rocketChatClient.js";
+import { RocketChatAuthError, RocketChatClient } from "../clients/rocketChatClient.js";
+import { RocketChatRealtimeClient } from "../clients/rocketChatRealtimeClient.js";
 import { BotState } from "../state/botState.js";
 import { sleep } from "../utils/sleep.js";
+import { BotContextStore } from "./botContextStore.js";
+import { BotNotificationStore } from "./botNotificationStore.js";
 import { ReplyService } from "./replyService.js";
+import { SubscriptionPreferenceStore } from "./subscriptionPreferenceStore.js";
 
 export class BotRunner {
   private readonly state = new BotState();
-  private readonly startedAt = new Date();
-  private readonly roomWatermarks = new Map<string, Date>();
 
   constructor(
     private readonly config: BotConfig,
+    private readonly auth: RocketChatAuth,
     private readonly rocketChatClient: RocketChatClient,
-    private readonly replyService: ReplyService
+    private readonly rocketChatRealtimeClient: RocketChatRealtimeClient,
+    private readonly replyService: ReplyService,
+    private readonly subscriptionPreferenceStore: SubscriptionPreferenceStore,
+    private readonly botNotificationStore: BotNotificationStore,
+    private readonly botContextStore: BotContextStore,
+    private readonly disconnectAuth: () => Promise<void>
   ) {}
 
   async start(): Promise<void> {
-    this.initializeAuth();
-    console.log(`Starting poll loop (${this.config.pollIntervalMs} ms)`);
-    await this.runLoop();
-  }
-
-  private initializeAuth(): void {
     this.state.userId = this.rocketChatClient.currentUserId;
     console.log(
-      `Using Rocket.Chat token auth for '${this.rocketChatClient.identityLabel}' (userId=${this.state.userId})`
+      `Using Rocket.Chat token auth for '${this.rocketChatClient.identityLabel}' (userId=${this.state.userId})`,
     );
-  }
 
-  private async runLoop(): Promise<void> {
+    let subscriptions =
+      await this.subscriptionPreferenceStore.loadManagedSubscriptions(this.auth);
+    if (subscriptions.length === 0) {
+      console.log(
+        `[${this.rocketChatClient.identityLabel}] No managed subscriptions found. Realtime listener not started.`,
+      );
+      return;
+    }
+
     while (true) {
       try {
-        const rooms = await this.rocketChatClient.listDirectRooms();
-        for (const room of rooms) {
-          await this.processRoom(room._id);
-        }
+        await this.rocketChatRealtimeClient.run(subscriptions, async (subscription, message) => {
+          await this.processMessage(subscription, message);
+        });
       } catch (error) {
+        if (error instanceof RocketChatAuthError) {
+          await this.handleAuthError(error);
+          return;
+        }
+
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`Polling error: ${message}`);
+        console.error(
+          `[${this.rocketChatClient.identityLabel}] Realtime listener error: ${message}`,
+        );
       }
 
-      await sleep(this.config.pollIntervalMs);
+      subscriptions = await this.subscriptionPreferenceStore.loadManagedSubscriptions(this.auth);
+      await sleep(this.config.rcRetryBackoffMs);
     }
   }
 
-  private async processRoom(roomId: string): Promise<void> {
-    const oldest = this.roomWatermarks.get(roomId) ?? this.startedAt;
-    const messages = await this.rocketChatClient.getDirectMessages(roomId, oldest);
+  private async handleAuthError(error: RocketChatAuthError): Promise<void> {
+    console.error(
+      `[${this.rocketChatClient.identityLabel}] Rocket.Chat auth failed (${error.status}). Disconnecting stored integration.`
+    );
 
-    for (const message of messages) {
-      await this.processMessage(roomId, message);
-      const timestamp = this.getMessageDate(message);
-      if (timestamp) {
-        this.roomWatermarks.set(roomId, timestamp);
-      }
+    try {
+      await this.disconnectAuth();
+      console.log(
+        `[${this.rocketChatClient.identityLabel}] Removed stored Rocket.Chat credentials after auth failure.`
+      );
+    } catch (disconnectError) {
+      const message =
+        disconnectError instanceof Error ? disconnectError.message : String(disconnectError);
+      console.error(
+        `[${this.rocketChatClient.identityLabel}] Failed to remove stored Rocket.Chat credentials: ${message}`
+      );
     }
   }
 
-  private async processMessage(roomId: string, message: RocketChatMessage): Promise<void> {
-    if (!message._id) {
+  private async processMessage(
+    subscription: ManagedSubscription,
+    message: RocketChatMessage,
+  ): Promise<void> {
+    if (!message._id || this.state.isProcessed(message._id)) {
       return;
     }
 
@@ -69,26 +94,96 @@ export class BotRunner {
     }
 
     try {
-      const userText = (message.msg ?? "").trim();
-      console.log(`[${roomId}] User: ${userText}`);
-      const reply = await this.replyService.generateReply(roomId, userText);
-      await this.rocketChatClient.postMessage(roomId, reply);
-      console.log(`[${roomId}] Bot: ${reply}`);
+      const contextPayload = await this.botContextStore.loadContextForMessage(
+        this.auth,
+        subscription.roomId,
+        subscription.roomType,
+        subscription.id,
+        message,
+        await this.replyService.embedText((message.msg ?? "").trim()),
+      );
+
+      const incomingText = (message.msg ?? "").trim();
+      const senderName = message.u?.username ?? message.u?._id ?? subscription.roomId;
+      console.log(
+        `[${subscription.roomId}] ${contextPayload.subscription.preferenceColor.toUpperCase()} User: ${incomingText}`,
+      );
+
+      const suggestedReply = await this.replyService.generateReply(
+        incomingText,
+        contextPayload.currentSummary,
+        contextPayload.relevantSummaries,
+      );
+
+      if (contextPayload.subscription.preferenceColor === "green") {
+        const postedMessage = await this.rocketChatClient.postMessage(subscription.roomId, suggestedReply);
+        if (postedMessage) {
+          await this.subscriptionPreferenceStore.syncOutgoingMessage(
+            this.auth,
+            subscription.roomId,
+            subscription.roomType,
+            postedMessage,
+          );
+        }
+        await this.updateSummary(subscription, message._id, incomingText, suggestedReply, contextPayload.currentSummary?.summary);
+        console.log(`[${subscription.roomId}] Bot: ${suggestedReply}`);
+      } else {
+        await this.updateSummary(subscription, message._id, incomingText, undefined, contextPayload.currentSummary?.summary);
+        await this.botNotificationStore.createNotification({
+          auth: this.auth,
+          roomId: subscription.roomId,
+          roomType: subscription.roomType,
+          subscriptionId: subscription.id,
+          messageId: message._id,
+          preferenceColor: contextPayload.subscription.preferenceColor,
+          kind:
+            contextPayload.subscription.preferenceColor === "yellow" ? "approval" : "info",
+          senderName,
+          senderUsername: message.u?.username,
+          incomingText,
+          suggestedReply,
+        });
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error(`[${roomId}] Failed to reply: ${errorMessage}`);
-      await this.rocketChatClient.postMessage(
-        roomId,
-        "I hit an internal error while generating a reply. Please try again."
-      );
+      console.error(`[${subscription.roomId}] Failed to handle message: ${errorMessage}`);
+      if (subscription.preferenceColor === "green") {
+        await this.rocketChatClient.postMessage(
+          subscription.roomId,
+          "I hit an internal error while generating a reply. Please try again.",
+        );
+      }
     } finally {
       this.state.markProcessed(message._id);
     }
   }
 
+  private async updateSummary(
+    subscription: ManagedSubscription,
+    messageId: string,
+    incomingText: string,
+    assistantReply: string | undefined,
+    currentSummary: string | undefined,
+  ): Promise<void> {
+    const revisedSummary = await this.replyService.reviseSummary({
+      currentSummary,
+      incomingText,
+      assistantReply,
+    });
+    const embedding = await this.replyService.embedText(revisedSummary);
+    await this.botContextStore.saveSummary({
+      auth: this.auth,
+      subscription,
+      summary: revisedSummary,
+      embedding,
+      lastMessageId: messageId,
+      sourceMessageCount: undefined,
+      source: "bot",
+    });
+  }
+
   private shouldRespondToMessage(message: RocketChatMessage): boolean {
     if (!message._id) return false;
-    if (this.state.isProcessed(message._id)) return false;
     if (message.u?._id === this.state.userId) return false;
     if (typeof message.msg !== "string") return false;
 
@@ -100,22 +195,5 @@ export class BotRunner {
     }
 
     return true;
-  }
-
-  private getMessageDate(message: RocketChatMessage): Date | null {
-    if (!message.ts) {
-      return null;
-    }
-
-    if (typeof message.ts === "string") {
-      const parsed = new Date(message.ts);
-      return Number.isNaN(parsed.getTime()) ? null : parsed;
-    }
-
-    if (typeof message.ts.$date === "number") {
-      return new Date(message.ts.$date);
-    }
-
-    return null;
   }
 }
