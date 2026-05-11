@@ -1175,7 +1175,7 @@ export class UsersController {
     try {
       const subscription = await this.rocketSyncService.updateSubscriptionPreferenceColor(
         sessionUser.id,
-        subscriptionId,
+        subscriptionId as string,
         preferenceColor,
       );
 
@@ -1243,7 +1243,7 @@ export class UsersController {
     }
 
     try {
-      const user = await this.usersService.updateBotActivationPreferences(sessionUser.id, body);
+      const user = await this.usersService.saveBotActivationPreferences(sessionUser.id, body);
       response.status(200).json(this.mapBotActivationPreferences(user));
     } catch (error: any) {
       this.logger.error(`Failed to update bot activation preferences for ${sessionUser.id}: ${error.message}`, error.stack);
@@ -1266,10 +1266,12 @@ export class UsersController {
         return;
       }
 
+      const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
+
       response.status(200).json({
-        userId: user.rocketIntegration.userId,
-        syncStatus: user.rocketSyncStatus,
-        lastSyncError: user.rocketLastSyncError,
+        userId: rocketAuth?.userId,
+        syncStatus: user.rocketIntegration.syncStatus,
+        lastSyncError: user.rocketIntegration.syncError,
       });
     } catch (error: any) {
       this.logger.error(`Failed to get rocket integration for ${sessionUser.id}: ${error.message}`, error.stack);
@@ -1296,10 +1298,7 @@ export class UsersController {
     }
 
     try {
-      await this.usersService.saveRocketIntegration(sessionUser.id, {
-        userId: rocketUserId,
-        userToken: rocketUserToken,
-      });
+      await this.usersService.saveRocketIntegration(sessionUser.id, rocketUserToken, rocketUserId);
 
       // Trigger initial sync
       await this.triggerWorkerSyncForUser(sessionUser.id);
