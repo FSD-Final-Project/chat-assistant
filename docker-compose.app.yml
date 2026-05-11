@@ -27,7 +27,7 @@ services:
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
-    command: ["/bin/sh", "-c", "ollama pull \"$OLLAMA_MODEL\""]
+    command: ["/bin/sh", "-c", "ollama pull \"$$OLLAMA_MODEL\""]
     restart: "no"
 
   server:
@@ -45,7 +45,7 @@ services:
       - PORT=3001
       - CLIENT_URL=http://localhost:8080
       - MONGODB_URI=mongodb://mongo:27017/chat-assistant
-      - RC_URL=${RC_URL:-https://open.rocket.chat}
+      - RC_URL=${RC_URL:-http://rocketchat:3000}
       - SESSION_SECRET=${SESSION_SECRET:-change-me-session-secret}
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-change-me-internal-key}
       - ROCKET_CREDENTIALS_ENCRYPTION_KEY=${ROCKET_CREDENTIALS_ENCRYPTION_KEY:-change-me-rocket-crypto-key}
@@ -69,7 +69,7 @@ services:
     environment:
       - MAIN_SERVER_URL=http://server:3001
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-change-me-internal-key}
-      - RC_URL=${RC_URL:-https://open.rocket.chat}
+      - RC_URL=${RC_URL:-http://rocketchat:3000}
       - POLL_INTERVAL_MS=30000
       - RC_REQUEST_INTERVAL_MS=500
       - RC_RETRY_BACKOFF_MS=5000
@@ -91,7 +91,7 @@ services:
     working_dir: /app
     command: npm run dev:bot
     environment:
-      - RC_URL=${RC_URL:-https://open.rocket.chat}
+      - RC_URL=${RC_URL:-http://rocketchat:3000}
       - MAIN_SERVER_URL=http://server:3001
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-change-me-internal-key}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
