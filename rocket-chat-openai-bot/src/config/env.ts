@@ -10,6 +10,14 @@ function getRequiredEnv(name: string): string {
   return value;
 }
 
+function getOptionalEnv(name: string, defaultValue = ""): string {
+  const value = process.env[name];
+  if (!value) {
+    return defaultValue;
+  }
+  return value;
+}
+
 function getNumberEnv(name: string, defaultValue: number): number {
   const raw = process.env[name];
   if (!raw) {
@@ -50,10 +58,16 @@ export function loadConfig(): BotConfig {
     rcUrl: normalizeBaseUrl(getRequiredEnv("RC_URL")),
     mainServerUrl: normalizeBaseUrl(getRequiredEnv("MAIN_SERVER_URL")),
     internalApiKey: getRequiredEnv("INTERNAL_API_KEY"),
-    openAiApiKey: getRequiredEnv("OPENAI_API_KEY"),
+    openAiApiKey: getOptionalEnv("OPENAI_API_KEY"),
+    openAiBaseUrl: normalizeBaseUrl(getOptionalEnv("OPENAI_BASE_URL", "https://api.openai.com/v1")),
     openAiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
+    ollamaApiKey: getOptionalEnv("OLLAMA_API_KEY", "ollama"),
+    ollamaBaseUrl: normalizeBaseUrl(getOptionalEnv("OLLAMA_BASE_URL", "http://localhost:11434/v1")),
+    ollamaModel: process.env.OLLAMA_MODEL ?? "llama3.2:3b",
+    llmFallbackToOllama: getBooleanEnv("LLM_FALLBACK_TO_OLLAMA", true),
+    summaryModel: process.env.SUMMARY_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
+    embeddingModel: process.env.EMBEDDING_MODEL ?? "text-embedding-3-small",
     systemPrompt: process.env.SYSTEM_PROMPT ?? "You are a helpful Rocket.Chat assistant.",
-    pollIntervalMs: getNumberEnv("POLL_INTERVAL_MS", 3000),
     rcRequestIntervalMs: getNumberEnv("RC_REQUEST_INTERVAL_MS", 400),
     rcRetryBackoffMs: getNumberEnv("RC_RETRY_BACKOFF_MS", 5000),
     maxContextMessages: getNumberEnv("MAX_CONTEXT_MESSAGES", 12),

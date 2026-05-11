@@ -61,7 +61,9 @@ export default function TodaySummary() {
     
     // Sort messages so the oldest is first, newest is at the bottom
     const sortedMessages = [...recentMessages].reverse();
-    const lastMessageText = sortedMessages.length > 0 ? String(sortedMessages[sortedMessages.length - 1].payload?.msg || "") : "";
+    const lastMessage = sortedMessages.length > 0 ? sortedMessages[sortedMessages.length - 1] : null;
+    const lastMessageText = lastMessage ? String(lastMessage.payload?.msg || "") : "";
+    const lastMessageId = lastMessage ? (lastMessage.messageId || lastMessage._id) : null;
 
     // Fetch Auto-Reply Suggestion
     const { data: suggestionData, isLoading: isLoadingSuggestion } = useQuery({
@@ -71,7 +73,7 @@ export default function TodaySummary() {
             const res = await fetch(`/users/me/rocket-rooms/${activeChatId}/auto-reply-suggestion`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ messageText: lastMessageText })
+                body: JSON.stringify({ messageText: lastMessageText, messageId: lastMessageId })
             });
             if (!res.ok) throw new Error("Failed to fetch suggestion");
             return res.json();

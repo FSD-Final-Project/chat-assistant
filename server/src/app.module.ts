@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { MongooseModule } from "@nestjs/mongoose";
 import { ScheduleModule } from "@nestjs/schedule";
+import { resolve } from "node:path";
 import { AuthModule } from "./auth/auth.module";
 import { UsersModule } from "./users/users.module";
 
@@ -9,6 +10,11 @@ import { UsersModule } from "./users/users.module";
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: [
+        resolve(process.cwd(), ".env"),
+        resolve(process.cwd(), "server/.env"),
+        resolve(process.cwd(), "../server/.env"),
+      ],
     }),
     ScheduleModule.forRoot(),
     MongooseModule.forRootAsync({
@@ -21,4 +27,4 @@ import { UsersModule } from "./users/users.module";
     UsersModule,
   ],
 })
-export class AppModule {}
+export class AppModule { }

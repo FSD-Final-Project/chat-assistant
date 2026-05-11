@@ -14,9 +14,10 @@ interface DatePickerProps {
     value?: Date;
     onChange?: (date: Date | undefined) => void;
     className?: string;
+    disabled?: boolean;
 }
 
-export function DatePicker({ value, onChange, className }: DatePickerProps) {
+export function DatePicker({ value, onChange, className, disabled = false }: DatePickerProps) {
     const [open, setOpen] = React.useState(false);
 
     return (
@@ -24,6 +25,7 @@ export function DatePicker({ value, onChange, className }: DatePickerProps) {
             <PopoverTrigger asChild>
                 <Button
                     variant="outline"
+                    disabled={disabled}
                     className={cn(
                         "flex items-center gap-2 text-sm bg-white rounded-full px-3 py-1 h-auto border-border text-card-light-foreground hover:bg-muted",
                         className
@@ -41,6 +43,7 @@ export function DatePicker({ value, onChange, className }: DatePickerProps) {
                         onChange?.(date);
                         setOpen(false);
                     }}
+                    disabled={disabled}
                     initialFocus
                     className={cn("p-3 pointer-events-auto")}
                 />

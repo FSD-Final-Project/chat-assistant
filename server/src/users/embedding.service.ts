@@ -12,6 +12,10 @@ import {
   RocketMessageRecord,
   RocketMessageDocument,
 } from "./schemas/rocket-message.schema";
+import {
+  MessageSuggestionRecord,
+  MessageSuggestionDocument,
+} from "./schemas/message-suggestion.schema";
 
 @Injectable()
 export class EmbeddingService {
@@ -24,6 +28,8 @@ export class EmbeddingService {
     private readonly chunkModel: Model<MessageChunkDocument>,
     @InjectModel(RocketMessageRecord.name)
     private readonly messageModel: Model<RocketMessageDocument>,
+    @InjectModel(MessageSuggestionRecord.name)
+    private readonly suggestionModel: Model<MessageSuggestionDocument>,
   ) {
     this.openai = new OpenAI({
       apiKey: this.openaiApiKey,
@@ -305,68 +311,101 @@ export class EmbeddingService {
   }
 
   /**
-   * Generates an auto-reply suggestion using hybrid retrieval (Vector Search + Recent Context)
+   * Generates an auto-reply suggestion using hybrid retrieval or provided context
    */
   async getAutoReplySuggestion(
     appUserGoogleId: string,
     roomId: string,
     messageText: string,
+    context?: {
+      currentSummary?: string | null;
+      relevantSummaries?: Array<{ roomId: string; summary: string }>;
+    },
   ): Promise<string> {
-    // 1. Generate embedding for the input message
-    const queryVector = await this.generateEmbedding(messageText);
+    let contextText = "";
 
-    // 2. Perform Hybrid Retrieval Query (Separated for local MongoDB compatibility)
-    const last5Minutes = new Date(Date.now() - 5 * 60 * 1000);
-
-    let vectorResults: any[] = [];
-    try {
-      vectorResults = await this.chunkModel.aggregate([
-        {
-          $vectorSearch: {
-            index: "vector_index",
-            path: "embedding",
-            queryVector: queryVector,
-            numCandidates: 100,
-            limit: 5,
-            filter: { appUserGoogleId },
+    if (context) {
+      const sections: string[] = [];
+      if (context.currentSummary) {
+        sections.push(`Current conversation summary:\n${context.currentSummary}`);
+      }
+      if (context.relevantSummaries && context.relevantSummaries.length > 0) {
+        sections.push(
+          [
+            "Related conversation summaries:",
+            ...context.relevantSummaries.map((s, i) => `${i + 1}. [room ${s.roomId}] ${s.summary}`),
+          ].join("\n"),
+        );
+      }
+      contextText = sections.join("\n\n").trim();
+    } else {
+      // Fallback to legacy retrieval if no context provided
+      const queryVector = await this.generateEmbedding(messageText);
+      const last5Minutes = new Date(Date.now() - 5 * 60 * 1000);
+      let vectorResults: any[] = [];
+      try {
+        vectorResults = await this.chunkModel.aggregate([
+          {
+            $vectorSearch: {
+              index: "vector_index",
+              path: "embedding",
+              queryVector: queryVector,
+              numCandidates: 100,
+              limit: 5,
+              filter: { appUserGoogleId },
+            },
           },
-        },
-      ]);
-    } catch (error: any) {
-      this.logger.warn(`Vector search failed (likely not on Atlas): ${error.message}. Falling back to recent context only.`);
+        ]);
+      } catch (error: any) {
+        this.logger.warn(`Vector search failed: ${error.message}`);
+      }
+
+      const recentResults = await this.chunkModel.find({
+        appUserGoogleId,
+        roomId,
+        startTime: { $gte: last5Minutes },
+      });
+
+      contextText = [...vectorResults, ...recentResults]
+        .map((chunk) => this.formatChunkForEmbedding(chunk.messages))
+        .join("\n---\n");
     }
 
-    const recentResults = await this.chunkModel.find({
-      appUserGoogleId,
-      roomId,
-      startTime: { $gte: last5Minutes },
-    });
+    const systemPrompt = [
+      "You are a helpful Rocket.Chat assistant helping a user reply to messages.",
+      "Reply as the account owner in first-person voice. Do not present yourself as a bot or AI.",
+      "Use the following context from previous conversations to suggest a natural, helpful reply.",
+      "",
+      "Context:",
+      contextText || "(no context available)",
+    ].join("\n");
 
-    const relevantChunks = [...vectorResults, ...recentResults];
-
-    // 3. Format context for LLM
-    const contextText = relevantChunks
-      .map((chunk) => this.formatChunkForEmbedding(chunk.messages))
-      .join("\n---\n");
-
-    // 4. Call OpenAI Chat Completion
     const completion = await this.openai.chat.completions.create({
       model: this.openaiModel,
       messages: [
-        {
-          role: "system",
-          content: `You are an AI assistant helping a user reply to messages in Rocket.Chat. 
-Use the following context from previous conversations to suggest a natural, helpful reply.
-Context:
-${contextText}`,
-        },
-        {
-          role: "user",
-          content: `Suggest a reply for this message: "${messageText}"`,
-        },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Suggest a reply for this message: "${messageText}"` },
       ],
     });
 
     return completion.choices[0].message.content ?? "Sorry, I couldn't generate a suggestion.";
+  }
+
+  async findCachedSuggestion(appUserGoogleId: string, messageId: string): Promise<string | null> {
+    const record = await this.suggestionModel.findOne({ appUserGoogleId, messageId });
+    return record?.suggestion ?? null;
+  }
+
+  async saveSuggestion(
+    appUserGoogleId: string,
+    roomId: string,
+    messageId: string,
+    suggestion: string,
+  ): Promise<void> {
+    await this.suggestionModel.findOneAndUpdate(
+      { appUserGoogleId, messageId },
+      { $set: { appUserGoogleId, roomId, messageId, suggestion } },
+      { upsert: true, new: true },
+    );
   }
 }
