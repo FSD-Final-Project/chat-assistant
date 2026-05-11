@@ -77,13 +77,15 @@ export class ReplyService {
   async generateReply(
     incomingText: string,
     currentSummary: SummaryContextItem | null,
-    relevantSummaries: SummaryContextItem[]
+    relevantSummaries: SummaryContextItem[],
+    onDelta?: (text: string) => Promise<void> | void,
   ): Promise<string> {
     const userText = this.config.botTriggerPrefix
       ? incomingText.trim().slice(this.config.botTriggerPrefix.length).trim()
       : incomingText.trim();
 
     if (isTodoListMessage(userText)) {
+      await onDelta?.("noted");
       return "noted";
     }
 
@@ -116,11 +118,7 @@ export class ReplyService {
     const canUseOpenAi = this.config.openAiApiKey.trim().length > 0;
     if (canUseOpenAi) {
       try {
-        const response = await this.openai.responses.create({
-          model: this.config.openAiModel,
-          input,
-        });
-        output = response.output_text?.trim() ?? "";
+        output = await this.streamResponseText(this.openai, this.config.openAiModel, input, onDelta);
       } catch (error) {
         if (!this.config.llmFallbackToOllama) {
           throw error;
@@ -130,11 +128,7 @@ export class ReplyService {
     }
 
     if (!output && this.config.llmFallbackToOllama) {
-      const response = await this.ollama.responses.create({
-        model: this.config.ollamaModel,
-        input,
-      });
-      output = response.output_text?.trim() ?? "";
+      output = await this.streamResponseText(this.ollama, this.config.ollamaModel, input, onDelta);
     }
 
     if (!output) {
@@ -144,6 +138,39 @@ export class ReplyService {
     }
 
     return output;
+  }
+
+  private async streamResponseText(
+    client: OpenAI,
+    model: string,
+    input: Array<{ role: "system" | "user"; content: string }>,
+    onDelta?: (text: string) => Promise<void> | void,
+  ): Promise<string> {
+    if (!onDelta) {
+      const response = await client.responses.create({
+        model,
+        input,
+      });
+      return response.output_text?.trim() ?? "";
+    }
+
+    let output = "";
+    const stream = await client.responses.create({
+      model,
+      input,
+      stream: true,
+    });
+
+    for await (const event of stream) {
+      if (event.type !== "response.output_text.delta") {
+        continue;
+      }
+
+      output += event.delta;
+      await onDelta(output);
+    }
+
+    return output.trim();
   }
 
   async reviseSummary(input: {

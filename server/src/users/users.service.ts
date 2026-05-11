@@ -22,6 +22,15 @@ interface LocalUserInput {
 
 type RocketSyncStatus = "pending" | "syncing" | "completed" | "failed";
 
+export interface BotActivationPreferencesInput {
+  timeEnabled: boolean;
+  startTime: string;
+  endTime: string;
+  dateEnabled: boolean;
+  startDate?: string;
+  endDate?: string;
+}
+
 @Injectable()
 export class UsersService {
   constructor(@InjectModel(User.name) private readonly userModel: Model<UserDocument>) {}
@@ -163,6 +172,35 @@ export class UsersService {
         },
         $set: {
           "rocketIntegration.updatedAt": new Date(),
+        },
+      },
+      { new: true },
+    );
+  }
+
+  getBotActivationPreferences(
+    user: Pick<User, "botActivationPreferences"> | null | undefined,
+  ): BotActivationPreferencesInput {
+    const preferences = user?.botActivationPreferences;
+    return {
+      timeEnabled: preferences?.timeEnabled ?? false,
+      startTime: preferences?.startTime ?? "15:00",
+      endTime: preferences?.endTime ?? "20:30",
+      dateEnabled: preferences?.dateEnabled ?? false,
+      startDate: preferences?.startDate,
+      endDate: preferences?.endDate,
+    };
+  }
+
+  async saveBotActivationPreferences(
+    googleId: string,
+    preferences: BotActivationPreferencesInput,
+  ): Promise<UserDocument | null> {
+    return this.userModel.findOneAndUpdate(
+      { googleId },
+      {
+        $set: {
+          botActivationPreferences: preferences,
         },
       },
       { new: true },

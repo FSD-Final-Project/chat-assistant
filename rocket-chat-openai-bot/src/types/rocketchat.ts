@@ -5,6 +5,7 @@ export interface RocketChatUserRef {
 
 export interface RocketChatMessage {
   _id: string;
+  rid?: string;
   msg?: string;
   u?: RocketChatUserRef;
   ts?: string | { $date?: number };

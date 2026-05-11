@@ -34,6 +34,7 @@ export function BotNotificationCenter() {
     const [draftReplies, setDraftReplies] = useState<Record<string, string>>({});
     const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
     const seenNotificationIds = useRef<Set<string>>(new Set());
+    const userEditedDraftIds = useRef<Set<string>>(new Set());
 
     useEffect(() => {
         if (!isAuthenticated || typeof window === "undefined" || !("Notification" in window)) {
@@ -65,7 +66,11 @@ export function BotNotificationCenter() {
             setDraftReplies((prev) => {
                 const nextDrafts = { ...prev };
                 for (const notification of nextNotifications) {
-                    if (notification.kind === "approval" && nextDrafts[notification.id] === undefined) {
+                    if (
+                        notification.kind === "approval" &&
+                        notification.suggestedReply &&
+                        !userEditedDraftIds.current.has(notification.id)
+                    ) {
                         nextDrafts[notification.id] = notification.suggestedReply ?? "";
                     }
                 }
@@ -231,20 +236,27 @@ export function BotNotificationCenter() {
                             />
                         </div>
 
-                        {notification.suggestedReply ? (
+                        {notification.kind === "approval" ? (
                             <div className="mt-3 rounded-xl bg-primary/5 p-3">
                                 <p className="text-xs uppercase tracking-wide text-muted-foreground">
                                     Suggested reply
                                 </p>
-                                <ExpandableText
-                                    text={
-                                        draftReplies[notification.id] ??
-                                        notification.suggestedReply ??
-                                        ""
-                                    }
-                                    expanded={Boolean(expandedSections[`${notification.id}:reply`])}
-                                    onToggle={() => toggleExpandedSection(`${notification.id}:reply`)}
-                                />
+                                {notification.suggestedReply || draftReplies[notification.id] ? (
+                                    <ExpandableText
+                                        text={
+                                            draftReplies[notification.id] ??
+                                            notification.suggestedReply ??
+                                            ""
+                                        }
+                                        expanded={Boolean(expandedSections[`${notification.id}:reply`])}
+                                        onToggle={() => toggleExpandedSection(`${notification.id}:reply`)}
+                                    />
+                                ) : (
+                                    <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+                                        <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
+                                        Generating reply...
+                                    </div>
+                                )}
                             </div>
                         ) : null}
 
@@ -253,12 +265,13 @@ export function BotNotificationCenter() {
                                 {isEditing ? (
                                     <textarea
                                         value={draftReplies[notification.id] ?? ""}
-                                        onChange={(event) =>
+                                        onChange={(event) => {
+                                            userEditedDraftIds.current.add(notification.id);
                                             setDraftReplies((prev) => ({
                                                 ...prev,
                                                 [notification.id]: event.target.value,
-                                            }))
-                                        }
+                                            }));
+                                        }}
                                         className="min-h-[96px] w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                                     />
                                 ) : null}

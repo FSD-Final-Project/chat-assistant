@@ -39,6 +39,27 @@ export class LocalAuth {
   refreshTokenExpiresAt?: Date;
 }
 
+@Schema({ _id: false, versionKey: false })
+export class BotActivationPreferences {
+  @Prop({ default: false })
+  timeEnabled!: boolean;
+
+  @Prop({ default: "15:00" })
+  startTime!: string;
+
+  @Prop({ default: "20:30" })
+  endTime!: string;
+
+  @Prop({ default: false })
+  dateEnabled!: boolean;
+
+  @Prop()
+  startDate?: string;
+
+  @Prop()
+  endDate?: string;
+}
+
 @Schema({ timestamps: true })
 export class User {
   @Prop({ required: true, unique: true, index: true })
@@ -67,6 +88,9 @@ export class User {
 
   @Prop({ type: RocketIntegration, default: null })
   rocketIntegration?: RocketIntegration | null;
+
+  @Prop({ type: BotActivationPreferences, default: () => ({}) })
+  botActivationPreferences?: BotActivationPreferences;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
