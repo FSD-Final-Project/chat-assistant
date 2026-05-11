@@ -2,46 +2,6 @@ import OpenAI from "openai";
 
 import type { BotConfig, SummaryContextItem } from "../types/bot.js";
 
-function isTodoListMessage(text: string): boolean {
-  const normalized = text.toLowerCase();
-  const hasTodoKeyword =
-    normalized.includes("todo") || normalized.includes("to-do") || normalized.includes("task list");
-
-  const lines = text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  const listItemCount = lines.filter((line) =>
-    /^(-|\*|\d+\.|\[\s?\])\s+/.test(line)
-  ).length;
-
-  return hasTodoKeyword || listItemCount >= 2;
-}
-
-function buildSummaryContextBlock(
-  currentSummary: SummaryContextItem | null,
-  relevantSummaries: SummaryContextItem[],
-): string {
-  const sections: string[] = [];
-
-  if (currentSummary?.summary) {
-    sections.push(`Current conversation summary:\n${currentSummary.summary}`);
-  }
-
-  if (relevantSummaries.length > 0) {
-    sections.push(
-      [
-        "Related conversation summaries:",
-        ...relevantSummaries.map((summary, index) =>
-          `${index + 1}. [room ${summary.roomId}] ${summary.summary}`,
-        ),
-      ].join("\n"),
-    );
-  }
-
-  return sections.join("\n\n").trim();
-}
 
 function cleanSummaryText(text: string): string {
   return text
@@ -59,8 +19,6 @@ function cleanSummaryText(text: string): string {
 
 export class ReplyService {
   private readonly openai: OpenAI;
-  private readonly ollama: OpenAI;
-
   constructor(
     private readonly config: BotConfig
   ) {
@@ -68,110 +26,8 @@ export class ReplyService {
       apiKey: config.openAiApiKey || "missing-openai-key",
       baseURL: config.openAiBaseUrl,
     });
-    this.ollama = new OpenAI({
-      apiKey: config.ollamaApiKey,
-      baseURL: config.ollamaBaseUrl,
-    });
   }
 
-  async generateReply(
-    incomingText: string,
-    currentSummary: SummaryContextItem | null,
-    relevantSummaries: SummaryContextItem[],
-    onDelta?: (text: string) => Promise<void> | void,
-  ): Promise<string> {
-    const userText = this.config.botTriggerPrefix
-      ? incomingText.trim().slice(this.config.botTriggerPrefix.length).trim()
-      : incomingText.trim();
-
-    if (isTodoListMessage(userText)) {
-      await onDelta?.("noted");
-      return "noted";
-    }
-
-    const summaryContext = buildSummaryContextBlock(currentSummary, relevantSummaries);
-
-    const input = [
-      { role: "system" as const, content: this.config.systemPrompt },
-      ...(this.config.speakAsUser
-        ? [
-            {
-              role: "system" as const,
-              content:
-                "Reply as the account owner in first-person voice. Do not present yourself as a bot or AI.",
-            },
-          ]
-        : []),
-      ...(summaryContext
-        ? [
-            {
-              role: "system" as const,
-              content: `Use these stored conversation summaries as context.\n\n${summaryContext}`,
-            },
-          ]
-        : []),
-      { role: "user" as const, content: userText },
-    ];
-
-    let output = "";
-
-    const canUseOpenAi = this.config.openAiApiKey.trim().length > 0;
-    if (canUseOpenAi) {
-      try {
-        output = await this.streamResponseText(this.openai, this.config.openAiModel, input, onDelta);
-      } catch (error) {
-        if (!this.config.llmFallbackToOllama) {
-          throw error;
-        }
-        console.warn("OpenAI request failed. Falling back to Ollama.", error);
-      }
-    }
-
-    if (!output && this.config.llmFallbackToOllama) {
-      output = await this.streamResponseText(this.ollama, this.config.ollamaModel, input, onDelta);
-    }
-
-    if (!output) {
-      throw new Error(
-        "No text output from any configured LLM provider (OpenAI/Ollama). Check API key, model, and endpoint."
-      );
-    }
-
-    return output;
-  }
-
-  private async streamResponseText(
-    client: OpenAI,
-    model: string,
-    input: Array<{ role: "system" | "user"; content: string }>,
-    onDelta?: (text: string) => Promise<void> | void,
-  ): Promise<string> {
-    if (!onDelta) {
-      const response = await client.responses.create({
-        model,
-        input,
-      });
-      return response.output_text?.trim() ?? "";
-    }
-
-    let output = "";
-    const stream = await client.responses.create({
-      model,
-      input,
-      stream: true,
-    });
-
-    for await (const event of stream) {
-      if (event.type !== "response.output_text.delta") {
-        continue;
-      }
-
-      output += event.delta;
-      await onDelta(output);
-    }
-
-    return output.trim();
-  }
 
   async reviseSummary(input: {
     currentSummary?: string | null;

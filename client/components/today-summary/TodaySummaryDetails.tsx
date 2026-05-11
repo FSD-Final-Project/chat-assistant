@@ -1,4 +1,5 @@
 import { MessageSquare, Sparkles, Bot, Loader2 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { makeStyles } from "../../pages/TodaySummery.styles";
 
 interface TodaySummaryDetailsProps {
@@ -25,6 +26,14 @@ export function TodaySummaryDetails({
     isSendingSuggestion
 }: TodaySummaryDetailsProps) {
     const styles = makeStyles();
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+    // Auto-scroll to bottom when messages change or loading finishes
+    useEffect(() => {
+        if (scrollContainerRef.current) {
+            scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+        }
+    }, [sortedMessages, isLoadingMessages, activeChatId]);
 
     if (!activeChatId) {
         return (
@@ -47,7 +56,7 @@ export function TodaySummaryDetails({
                     <MessageSquare className="w-5 h-5 text-primary" />
                     Recent Messages
                 </h3>
-                <div className={styles.messagesList}>
+                <div ref={scrollContainerRef} className={styles.messagesList}>
                     {isLoadingMessages ? (
                         <div className="flex justify-center items-center h-32">
                             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
