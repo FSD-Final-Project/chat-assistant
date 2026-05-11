@@ -342,7 +342,18 @@ export class EmbeddingService {
     // 2. Add Chunk Context (Vector Search)
     try {
       const queryVector = await this.generateEmbedding(messageText);
-      const vectorResults = await this.vectorSearch(appUserGoogleId, queryVector, 5);
+      const vectorResults = await this.chunkModel.aggregate([
+        {
+          $vectorSearch: {
+            index: "vector_index",
+            path: "embedding",
+            queryVector: queryVector,
+            numCandidates: 100,
+            limit: 5,
+            filter: { appUserGoogleId },
+          },
+        },
+      ]);
 
       if (vectorResults.length > 0) {
         sections.push(
@@ -377,8 +388,6 @@ export class EmbeddingService {
     const systemPrompt = [
       "You are a helpful Rocket.Chat assistant helping a user reply to messages.",
       "Reply as the account owner in first-person voice. Do not present yourself as a bot or AI.",
-      "Always use 'You' to refer to the account owner (the user you are assisting).",
-      "Keep suggestions very short (1-2 sentences max).",
       "Use the following context from previous conversations to suggest a natural, helpful reply.",
       "",
       "Context:",
@@ -396,8 +405,9 @@ export class EmbeddingService {
     return completion.choices[0].message.content ?? "Sorry, I couldn't generate a suggestion.";
   }
 
-  async findSuggestion(appUserGoogleId: string, roomId: string, messageId: string): Promise<MessageSuggestionDocument | null> {
-    return await this.suggestionModel.findOne({ appUserGoogleId, roomId, messageId });
+  async findCachedSuggestion(appUserGoogleId: string, messageId: string): Promise<string | null> {
+    const record = await this.suggestionModel.findOne({ appUserGoogleId, messageId });
+    return record?.suggestion ?? null;
   }
 
   async saveSuggestion(
@@ -406,12 +416,9 @@ export class EmbeddingService {
     messageId: string,
     suggestion: string,
   ): Promise<void> {
-    const ttlSeconds = Number.parseInt(this.configService.get<string>("SUGGESTION_CACHE_TTL_SECONDS") ?? "86400", 10);
-    const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
-
     await this.suggestionModel.findOneAndUpdate(
-      { appUserGoogleId, roomId, messageId },
-      { $set: { appUserGoogleId, roomId, messageId, suggestion, expiresAt } },
+      { appUserGoogleId, messageId },
+      { $set: { appUserGoogleId, roomId, messageId, suggestion } },
       { upsert: true, new: true },
     );
   }

@@ -802,239 +802,29 @@ export class UsersController {
     }
 
     const googleId = body.googleId?.trim();
-    const email = body.email?.trim().toLowerCase();
     const subscriptionId = body.subscriptionId?.trim();
     const roomId = body.roomId?.trim();
     const summary = body.summary?.trim();
-    const embedding = Array.isArray(body.embedding)
-      ? body.embedding.filter((value): value is number => typeof value === "number" && Number.isFinite(value))
-      : [];
-    const source = body.source ?? "worker";
 
-    if (!googleId || !email || !subscriptionId || !roomId || !summary) {
-      response.status(400).json({
-        message: "googleId, email, subscriptionId, roomId, and summary are required",
-      });
+    if (!googleId || !subscriptionId || !roomId || !summary) {
+      response.status(400).json({ message: "googleId, subscriptionId, roomId and summary are required" });
       return;
     }
 
-    const savedSummary = await this.rocketSyncService.upsertSummary({
+    await this.rocketSyncService.upsertSummary({
       appUserGoogleId: googleId,
-      appUserEmail: email,
+      appUserEmail: body.email?.trim().toLowerCase() || "",
       subscriptionId,
       roomId,
       roomType: body.roomType?.trim(),
       summary,
-      embedding,
+      embedding: body.embedding || [],
       lastMessageId: body.lastMessageId?.trim(),
-      sourceMessageCount:
-        typeof body.sourceMessageCount === "number" && body.sourceMessageCount > 0
-          ? Math.floor(body.sourceMessageCount)
-          : undefined,
-      source,
+      sourceMessageCount: body.sourceMessageCount || 0,
+      source: body.source || "worker",
     });
 
-    response.status(200).json({
-      success: true,
-      summaryId: savedSummary?._id,
-    });
-  }
-
-  @Post("internal/message-suggestions")
-  async saveInternalMessageSuggestion(
-    @Req() request: Request,
-    @Res() response: Response,
-    @Body() body: InternalMessageSuggestionBody,
-  ) {
-    try {
-      if (!this.isInternalRequestAuthorized(request)) {
-        response.status(401).json({ message: "Unauthorized" });
-        return;
-      }
-    } catch {
-      response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
-      return;
-    }
-
-    const googleId = body.googleId?.trim();
-    const roomId = body.roomId?.trim();
-    const messageId = body.messageId?.trim();
-    const suggestion = body.suggestion?.trim();
-
-    if (!googleId || !roomId || !messageId || !suggestion) {
-      response.status(400).json({
-        message: "googleId, roomId, messageId, and suggestion are required",
-      });
-      return;
-    }
-
-    await this.embeddingService.saveSuggestion(googleId, roomId, messageId, suggestion);
     response.status(200).json({ success: true });
-  }
-
-  @Post("internal/bot-context")
-  async getInternalBotContext(
-    @Req() request: Request,
-    @Res() response: Response,
-    @Body() body: InternalBotContextBody,
-  ) {
-    try {
-      if (!this.isInternalRequestAuthorized(request)) {
-        response.status(401).json({ message: "Unauthorized" });
-        return;
-      }
-    } catch {
-      response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
-      return;
-    }
-
-    const googleId = body.googleId?.trim();
-    const email = body.email?.trim().toLowerCase();
-    const roomId = body.roomId?.trim();
-    const roomType = body.roomType?.trim();
-    const subscriptionId = body.subscriptionId?.trim();
-    const message = body.message;
-    const contextLimit =
-      typeof body.contextLimit === "number" && body.contextLimit > 0
-        ? Math.floor(body.contextLimit)
-        : 4;
-    const queryEmbedding = Array.isArray(body.queryEmbedding)
-      ? body.queryEmbedding.filter((value): value is number => typeof value === "number" && Number.isFinite(value))
-      : undefined;
-
-    if (!googleId || !email || !roomId || !message) {
-      response.status(400).json({
-        message: "googleId, email, roomId, and message are required",
-      });
-      return;
-    }
-
-    const messageId = typeof message._id === "string" ? message._id.trim() : "";
-    if (!messageId) {
-      response.status(400).json({ message: "message._id is required" });
-      return;
-    }
-
-    await this.rocketSyncService.upsertMessages(googleId, email, roomId, roomType, [message]);
-
-    const subscription = subscriptionId
-      ? await this.rocketSyncService.findSubscription(googleId, subscriptionId)
-      : await this.rocketSyncService.findSubscriptionByRoomId(googleId, roomId);
-
-    if (!subscription) {
-      response.status(404).json({ message: "Subscription not found" });
-      return;
-    }
-
-    const currentSummary = await this.rocketSyncService.findSummaryBySubscriptionId(
-      googleId,
-      subscription.subscriptionId,
-    );
-    const allSummaries = await this.rocketSyncService.listSummaries(googleId);
-    const relevantSummaries = this.rankRelevantSummaries(
-      allSummaries,
-      queryEmbedding,
-      roomId,
-      contextLimit,
-    );
-
-    response.status(200).json({
-      subscription: {
-        id: subscription.subscriptionId,
-        roomId: subscription.roomId,
-        roomType: subscription.roomType,
-        preferenceColor: subscription.preferenceColor,
-      },
-      currentSummary: currentSummary ? this.mapSummaryContext(currentSummary) : null,
-      relevantSummaries,
-      suggestedReply:
-        body.includeSuggestion && messageId
-          ? await this.getOrCreateBotSuggestion(googleId, roomId, messageId, message.msg as string, {
-              currentSummary: currentSummary?.summary,
-              relevantSummaries: relevantSummaries.map((s) => ({ roomId: s.roomId, summary: s.summary })),
-            })
-          : undefined,
-    });
-  }
-
-  private async getOrCreateBotSuggestion(
-    googleId: string,
-    roomId: string,
-    messageId: string,
-    messageText: string,
-    context: any,
-  ): Promise<string> {
-    const cached = await this.embeddingService.findCachedSuggestion(googleId, messageId);
-    if (cached) return cached;
-
-    const suggestion = await this.embeddingService.getAutoReplySuggestion(
-      googleId,
-      roomId,
-      messageText,
-      context,
-    );
-
-    await this.embeddingService.saveSuggestion(googleId, roomId, messageId, suggestion);
-    return suggestion;
-  }
-
-  @Post("me/rocket-integration")
-  async saveRocketIntegration(
-    @Req() request: Request,
-    @Res() response: Response,
-    @Body() body: RocketIntegrationBody,
-  ) {
-    const sessionUser = this.getAuthenticatedUser(request);
-    if (!sessionUser) {
-      response.status(401).json({ message: "Unauthorized" });
-      return;
-    }
-
-    const rocketUserToken = body.rocketUserToken?.trim();
-    const rocketUserId = body.rocketUserId?.trim();
-
-    if (!rocketUserToken || !rocketUserId) {
-      response.status(400).json({ message: "rocketUserToken and rocketUserId are required" });
-      return;
-    }
-
-    try {
-      const user = await this.usersService.saveRocketIntegration(
-        sessionUser.id,
-        rocketUserToken,
-        rocketUserId,
-      );
-
-      if (!user) {
-        response.status(404).json({ message: "User not found" });
-        return;
-      }
-
-      try {
-        await this.triggerWorkerSyncForUser(sessionUser.id);
-      } catch (error) {
-        console.error(
-          `[RocketIntegration] Failed to trigger worker sync for ${sessionUser.id}: ${error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-
-      response.status(200).json({
-        success: true,
-        user: {
-          id: user.googleId,
-          email: user.email,
-          name: user.name,
-          givenName: user.givenName,
-          familyName: user.familyName,
-          picture: user.picture,
-          hasRocketIntegration: this.usersService.hasRocketIntegration(user),
-        },
-      });
-    } catch (error: any) {
-      this.logger.error(`Failed to save rocket integration for user ${sessionUser.id}: ${error.message}`, error.stack);
-      response.status(500).json({ message: "Internal server error" });
-    }
   }
 
   @Get("me/rocket-subscriptions")
@@ -1046,51 +836,35 @@ export class UsersController {
     }
 
     try {
-      const user = await this.usersService.findByGoogleId(sessionUser.id);
-      const rocketIntegration = this.usersService.getDecryptedRocketIntegration(user);
       const subscriptions = await this.rocketSyncService.listSubscriptions(sessionUser.id);
-      
+      const rocketAuth = await this.usersService.getDecryptedRocketIntegration(sessionUser.id);
+
       response.status(200).json({
-        myRocketUserId: rocketIntegration?.userId,
-        subscriptions: subscriptions.map((subscription) => ({
-          id: subscription.subscriptionId,
-          roomId: subscription.roomId,
-          roomType: subscription.roomType,
-          preferenceColor: subscription.preferenceColor,
-          payload: subscription.payload,
-          avatarUrl: `/users/me/rocket-subscriptions/${encodeURIComponent(subscription.subscriptionId)}/avatar`,
-        })),
+        myRocketUserId: rocketAuth?.userId,
+        subscriptions: subscriptions.map((subscription) => {
+          const payload = subscription.payload as Record<string, unknown>;
+          return {
+            id: subscription.subscriptionId,
+            roomId: subscription.roomId,
+            roomType: subscription.roomType,
+            displayName: this.getSubscriptionDisplayName(payload, subscription.roomId),
+            avatarUrl: this.buildSubscriptionAvatarUrl(subscription.roomType, payload),
+            preferenceColor: subscription.preferenceColor,
+            updatedAt: subscription.updatedAt,
+            payload,
+          };
+        }),
       });
     } catch (error: any) {
-      this.logger.error(`Failed to list subscriptions for user ${sessionUser.id}: ${error.message}`, error.stack);
+      this.logger.error(`Failed to get rocket subscriptions for ${sessionUser.id}: ${error.message}`, error.stack);
       response.status(500).json({ message: "Internal server error" });
     }
   }
 
-  @Get("me/bot-activation-preferences")
-  async getMyBotActivationPreferences(@Req() request: Request, @Res() response: Response) {
-    const sessionUser = this.getAuthenticatedUser(request);
-    if (!sessionUser) {
-      response.status(401).json({ message: "Unauthorized" });
-      return;
-    }
-
-    const user = await this.usersService.findByGoogleId(sessionUser.id);
-    if (!user) {
-      response.status(404).json({ message: "User not found" });
-      return;
-    }
-
-    response.status(200).json({
-      botActivationPreferences: this.mapBotActivationPreferences(user),
-    });
-  }
-
-  @Post("me/bot-activation-preferences")
-  async updateMyBotActivationPreferences(
+  @Get("me/rocket-rooms/:roomId/messages")
+  async getRoomMessages(
     @Req() request: Request,
     @Res() response: Response,
-    @Body() body: BotActivationPreferencesBody,
   ) {
     const sessionUser = this.getAuthenticatedUser(request);
     if (!sessionUser) {
@@ -1098,144 +872,156 @@ export class UsersController {
       return;
     }
 
-    const timeEnabled = body.timeEnabled === true;
-    const dateEnabled = body.dateEnabled === true;
-    const startTime = body.startTime?.trim();
-    const endTime = body.endTime?.trim();
-    const startDate = body.startDate?.trim();
-    const endDate = body.endDate?.trim();
-
-    if (!this.isValidTime(startTime) || !this.isValidTime(endTime)) {
-      response.status(400).json({ message: "startTime and endTime must use HH:mm format" });
+    const roomId = request.params.roomId as string;
+    if (!roomId) {
+      response.status(400).json({ message: "roomId is required" });
       return;
     }
 
-    if (dateEnabled) {
-      if (!this.isValidDate(startDate) || !this.isValidDate(endDate)) {
-        response.status(400).json({ message: "startDate and endDate must use YYYY-MM-DD format" });
-        return;
+    try {
+      const messages = await this.rocketSyncService.findMessagesByRoomId(sessionUser.id, roomId);
+      response.status(200).json({ messages });
+    } catch (error: any) {
+      this.logger.error(`Failed to get room messages for ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
+  }
+
+  @Post("me/rocket-rooms/:roomId/messages")
+  async postRoomMessage(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: { text: string },
+  ) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const roomId = request.params.roomId as string;
+    const text = body.text?.trim();
+
+    if (!roomId || !text) {
+      response.status(400).json({ message: "roomId and text are required" });
+      return;
+    }
+
+    try {
+      const message = await this.rocketChatService.postMessage(
+        sessionUser.id,
+        sessionUser.email,
+        roomId,
+        text,
+      );
+
+      // Auto-dismiss any pending bot notifications for this room since the user has replied manually
+      await this.botNotificationService.dismissByRoomId(sessionUser.id, roomId);
+
+      response.status(200).json({ success: true, message });
+    } catch (error: any) {
+      this.logger.error(`Failed to post message for user ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Failed to post message" });
+    }
+  }
+
+  @Get("me/rocket-rooms/:roomId/summary")
+  async getRoomSummary(
+    @Req() request: Request,
+    @Res() response: Response,
+  ) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const roomId = request.params.roomId as string;
+    if (!roomId) {
+      response.status(400).json({ message: "roomId is required" });
+      return;
+    }
+
+    try {
+      const summary = await this.rocketSyncService.findSummaryByRoomId(sessionUser.id, roomId);
+      response.status(200).json({ summary });
+    } catch (error: any) {
+      this.logger.error(`Failed to get room summary for ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
+  }
+
+  @Post("me/rocket-rooms/:roomId/auto-reply-suggestion")
+  async getAutoReplySuggestion(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: { messageText: string; messageId?: string },
+  ) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const roomId = request.params.roomId as string;
+    const messageText = body.messageText?.trim();
+    const messageId = body.messageId?.trim();
+
+    if (!roomId || !messageText) {
+      response.status(400).json({ message: "roomId and messageText are required" });
+      return;
+    }
+
+    try {
+      // Check cache first
+      if (messageId) {
+        const cachedSuggestion = await this.embeddingService.findSuggestion(sessionUser.id, roomId, messageId);
+        if (cachedSuggestion) {
+          response.status(200).json({ suggestion: cachedSuggestion.suggestion });
+          return;
+        }
       }
 
-      if (startDate > endDate) {
-        response.status(400).json({ message: "startDate must be before or equal to endDate" });
-        return;
+      // 1. Get current room summary
+      const currentSummary = await this.rocketSyncService.findSummaryByRoomId(sessionUser.id, roomId);
+
+      // 2. Get all other room summaries for context
+      const allSummaries = await this.rocketSyncService.listSummaries(sessionUser.id);
+
+      // 3. Rank them if we have an embedding for the current query (not implemented yet, just take first 4)
+      let context: any = null;
+      if (currentSummary || allSummaries.length > 0) {
+        const relevantSummaries = this.rankRelevantSummaries(
+          allSummaries,
+          undefined, // no query embedding for now
+          roomId,
+          4,
+        );
+
+        context = {
+          currentSummary: currentSummary?.summary,
+          relevantSummaries: relevantSummaries.map((s) => ({ roomId: s.roomId, summary: s.summary })),
+        };
       }
+
+      // 4. Generate suggestion
+      const suggestion = await this.embeddingService.getAutoReplySuggestion(
+        sessionUser.id,
+        roomId,
+        messageText,
+        context,
+      );
+
+      // 5. Cache it if we have a messageId
+      if (messageId) {
+        await this.embeddingService.saveSuggestion(sessionUser.id, roomId, messageId, suggestion);
+      }
+
+      response.status(200).json({ suggestion });
+    } catch (error: any) {
+      this.logger.error(`Failed to generate auto-reply suggestion for user ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Failed to generate auto-reply suggestion" });
     }
-
-    const user = await this.usersService.saveBotActivationPreferences(sessionUser.id, {
-      timeEnabled,
-      startTime,
-      endTime,
-      dateEnabled,
-      startDate: dateEnabled ? startDate : undefined,
-      endDate: dateEnabled ? endDate : undefined,
-    });
-
-    if (!user) {
-      response.status(404).json({ message: "User not found" });
-      return;
-    }
-
-    response.status(200).json({
-      success: true,
-      botActivationPreferences: this.mapBotActivationPreferences(user),
-    });
-  }
-
-  @Get("me/active-chats")
-  async getMyActiveChats(
-    @Req() request: Request,
-    @Res() response: Response,
-    @Query() query: ActiveChatsQuery,
-  ) {
-    const sessionUser = this.getAuthenticatedUser(request);
-    if (!sessionUser) {
-      response.status(401).json({ message: "Unauthorized" });
-      return;
-    }
-
-    const startDate = query.start ? new Date(query.start) : undefined;
-    const endDate = query.end ? new Date(query.end) : undefined;
-    const limit = query.limit ? Number.parseInt(query.limit, 10) : 8;
-
-    if (startDate && Number.isNaN(startDate.getTime())) {
-      response.status(400).json({ message: "Invalid start date" });
-      return;
-    }
-
-    if (endDate && Number.isNaN(endDate.getTime())) {
-      response.status(400).json({ message: "Invalid end date" });
-      return;
-    }
-
-    const activeChats = await this.rocketSyncService.listActiveChats(sessionUser.id, {
-      startDate,
-      endDate,
-      limit: Number.isFinite(limit) && limit > 0 ? limit : 8,
-    });
-
-    response.status(200).json({
-      chats: activeChats
-        .filter((chat) => chat.subscription)
-        .map((chat) => ({
-          id: chat.subscription!.subscriptionId,
-          roomId: chat.roomId,
-          roomType: chat.subscription!.roomType,
-          name: this.getSubscriptionDisplayName(chat.subscription!.payload, chat.roomId),
-          messageCount: chat.messageCount,
-          summary: chat.summary?.summary ?? "",
-          avatarUrl: `/users/me/rocket-subscriptions/${encodeURIComponent(
-            chat.subscription!.subscriptionId,
-          )}/avatar`,
-        })),
-    });
-  }
-
-  @Post("me/rocket-subscriptions/:subscriptionId/preference-color")
-  async updateMyRocketSubscriptionPreferenceColor(
-    @Req() request: Request,
-    @Res() response: Response,
-    @Body() body: UpdateRocketSubscriptionPreferenceColorBody,
-  ) {
-    const sessionUser = this.getAuthenticatedUser(request);
-    if (!sessionUser) {
-      response.status(401).json({ message: "Unauthorized" });
-      return;
-    }
-
-    const rawSubscriptionId = request.params.subscriptionId;
-    const subscriptionId =
-      typeof rawSubscriptionId === "string" ? rawSubscriptionId.trim() : undefined;
-    const preferenceColor = body.preferenceColor;
-
-    if (!subscriptionId) {
-      response.status(400).json({ message: "subscriptionId is required" });
-      return;
-    }
-
-    if (!preferenceColor || !["red", "yellow", "green"].includes(preferenceColor)) {
-      response.status(400).json({ message: "preferenceColor must be red, yellow, or green" });
-      return;
-    }
-
-    const subscription = await this.rocketSyncService.updateSubscriptionPreferenceColor(
-      sessionUser.id,
-      subscriptionId,
-      preferenceColor,
-    );
-
-    if (!subscription) {
-      response.status(404).json({ message: "Subscription not found" });
-      return;
-    }
-
-    response.status(200).json({
-      success: true,
-      subscription: {
-        id: subscription.subscriptionId,
-        preferenceColor: subscription.preferenceColor,
-      },
-    });
   }
 
   @Get("me/bot-notifications")
@@ -1246,10 +1032,15 @@ export class UsersController {
       return;
     }
 
-    const notifications = await this.botNotificationService.listPending(sessionUser.id);
-    response.status(200).json({
-      notifications: notifications.map((notification) => this.mapBotNotification(notification)),
-    });
+    try {
+      const notifications = await this.botNotificationService.listPending(sessionUser.id);
+      response.status(200).json({
+        notifications: notifications.map((n) => this.mapBotNotification(n)),
+      });
+    } catch (error: any) {
+      this.logger.error(`Failed to get bot notifications for ${sessionUser.id}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
   }
 
   @Get("me/bot-notifications/stream")
@@ -1261,32 +1052,24 @@ export class UsersController {
     }
 
     response.setHeader("Content-Type", "text/event-stream");
-    response.setHeader("Cache-Control", "no-cache, no-transform");
+    response.setHeader("Cache-Control", "no-cache");
     response.setHeader("Connection", "keep-alive");
-    response.setHeader("X-Accel-Buffering", "no");
-    response.flushHeaders?.();
+    response.flushHeaders();
 
-    const writeSnapshot = async () => {
+    const sendNotifications = async () => {
       const notifications = await this.botNotificationService.listPending(sessionUser.id);
-      response.write(
-        `event: notifications\ndata: ${JSON.stringify({
-          notifications: notifications.map((notification) => this.mapBotNotification(notification)),
-        })}\n\n`,
-      );
+      response.write(`event: notifications\ndata: ${JSON.stringify({
+        notifications: notifications.map((n) => this.mapBotNotification(n)),
+      })}\n\n`);
     };
 
-    await writeSnapshot();
+    await sendNotifications();
 
     const unsubscribe = this.botNotificationService.subscribe(sessionUser.id, () => {
-      void writeSnapshot();
+      void sendNotifications();
     });
 
-    const heartbeat = setInterval(() => {
-      response.write(": keep-alive\n\n");
-    }, 15000);
-
     request.on("close", () => {
-      clearInterval(heartbeat);
       unsubscribe();
       response.end();
     });
@@ -1327,9 +1110,9 @@ export class UsersController {
       }
 
       response.status(200).json({ success: true });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to approve notification";
-      response.status(500).json({ message });
+    } catch (error: any) {
+      this.logger.error(`Failed to approve bot notification ${notificationId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Failed to approve bot notification" });
     }
   }
 
@@ -1350,19 +1133,25 @@ export class UsersController {
       return;
     }
 
-    const notification = await this.botNotificationService.dismiss(sessionUser.id, notificationId);
-    if (!notification) {
-      response.status(404).json({ message: "Notification not found" });
-      return;
-    }
+    try {
+      const notification = await this.botNotificationService.dismiss(sessionUser.id, notificationId);
+      if (!notification) {
+        response.status(404).json({ message: "Notification not found" });
+        return;
+      }
 
-    response.status(200).json({ success: true });
+      response.status(200).json({ success: true });
+    } catch (error: any) {
+      this.logger.error(`Failed to dismiss bot notification ${notificationId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Failed to dismiss bot notification" });
+    }
   }
 
-  @Get("me/rocket-subscriptions/:subscriptionId/avatar")
-  async getMyRocketSubscriptionAvatar(
+  @Post("me/rocket-subscriptions/:subscriptionId/preference-color")
+  async updateRocketSubscriptionPreferenceColor(
     @Req() request: Request,
     @Res() response: Response,
+    @Body() body: UpdateRocketSubscriptionPreferenceColorBody,
   ) {
     const sessionUser = this.getAuthenticatedUser(request);
     if (!sessionUser) {
@@ -1370,270 +1159,173 @@ export class UsersController {
       return;
     }
 
-    const rawSubscriptionId = request.params.subscriptionId;
-    const subscriptionId =
-      typeof rawSubscriptionId === "string" ? rawSubscriptionId.trim() : undefined;
-    if (!subscriptionId) {
-      response.status(400).json({ message: "subscriptionId is required" });
+    const subscriptionId = request.params.subscriptionId;
+    const preferenceColor = body.preferenceColor;
+
+    if (!subscriptionId || !preferenceColor) {
+      response.status(400).json({ message: "subscriptionId and preferenceColor are required" });
       return;
     }
 
-    const subscription = await this.rocketSyncService.findSubscription(sessionUser.id, subscriptionId);
-    if (!subscription) {
-      response.status(404).json({ message: "Subscription not found" });
-      return;
-    }
-
-    const user = await this.usersService.findByGoogleId(sessionUser.id);
-    const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
-    if (!rocketAuth) {
-      response.status(404).json({ message: "Rocket.Chat credentials not found for user" });
-      return;
-    }
-
-    let avatarUrl: string | null = null;
-    try {
-      avatarUrl = this.buildSubscriptionAvatarUrl(subscription.roomType, subscription.payload);
-    } catch (error) {
-      response.status(500).json({ message: "Missing RC_URL on server" });
-      return;
-    }
-
-    if (!avatarUrl) {
-      response.status(404).json({ message: "Avatar not available for subscription" });
-      return;
-    }
-
-    const rocketResponse = await fetch(avatarUrl, {
-      headers: {
-        "X-Auth-Token": rocketAuth.userToken,
-        "X-User-Id": rocketAuth.userId,
-      },
-      redirect: "follow",
-    });
-
-    if (!rocketResponse.ok) {
-      response
-        .status(rocketResponse.status)
-        .json({ message: "Failed to fetch avatar from Rocket.Chat" });
-      return;
-    }
-
-    const contentType = rocketResponse.headers.get("content-type");
-    const cacheControl = rocketResponse.headers.get("cache-control");
-    const buffer = Buffer.from(await rocketResponse.arrayBuffer());
-
-    if (contentType) {
-      response.setHeader("Content-Type", contentType);
-    }
-
-    if (cacheControl) {
-      response.setHeader("Cache-Control", cacheControl);
-    } else {
-      response.setHeader("Cache-Control", "private, max-age=3600");
-    }
-
-    response.status(200).send(buffer);
-  }
-
-  @Post("me/rocket-rooms/:roomId/auto-reply-suggestion")
-  async getAutoReplySuggestion(
-    @Req() request: Request,
-    @Res() response: Response,
-    @Body() body: { messageText: string; messageId?: string },
-  ) {
-    const sessionUser = request.user as SessionUser | undefined;
-    if (!request.isAuthenticated() || !sessionUser) {
-      response.status(401).json({ message: "Unauthorized" });
-      return;
-    }
-
-    const roomId = request.params.roomId as string;
-    const messageText = body.messageText?.trim();
-    const messageId = body.messageId?.trim();
-
-    if (!roomId || !messageText) {
-      response.status(400).json({ message: "roomId and messageText are required" });
+    if (!["red", "yellow", "green"].includes(preferenceColor)) {
+      response.status(400).json({ message: "preferenceColor must be red, yellow, or green" });
       return;
     }
 
     try {
-      // 1. Check message suggestion cache
-      if (messageId) {
-        const cached = await this.embeddingService.findCachedSuggestion(sessionUser.id, messageId);
-        if (cached) {
-          response.status(200).json({ suggestion: cached });
-          return;
-        }
-      }
-
-      // 2. Check notifications for this message
-      if (messageId) {
-        const notification = await this.botNotificationService.findPendingById(sessionUser.id, messageId);
-        if (notification?.suggestedReply) {
-          response.status(200).json({ suggestion: notification.suggestedReply });
-          return;
-        }
-      }
-
-      // 3. Gather context for a fresh suggestion
-      const subscription = await this.rocketSyncService.findSubscriptionByRoomId(sessionUser.id, roomId);
-      let context: any = undefined;
-
-      if (subscription) {
-        const currentSummary = await this.rocketSyncService.findSummaryBySubscriptionId(
-          sessionUser.id,
-          subscription.subscriptionId,
-        );
-        const allSummaries = await this.rocketSyncService.listSummaries(sessionUser.id);
-        const relevantSummaries = this.rankRelevantSummaries(
-          allSummaries,
-          undefined, // no query embedding for now
-          roomId,
-          4,
-        );
-
-        context = {
-          currentSummary: currentSummary?.summary,
-          relevantSummaries: relevantSummaries.map((s) => ({ roomId: s.roomId, summary: s.summary })),
-        };
-      }
-
-      // 4. Generate suggestion
-      const suggestion = await this.embeddingService.getAutoReplySuggestion(
+      const subscription = await this.rocketSyncService.updateSubscriptionPreferenceColor(
         sessionUser.id,
-        roomId,
-        messageText,
-        context,
+        subscriptionId,
+        preferenceColor,
       );
 
-      // 5. Cache it if we have a messageId
-      if (messageId) {
-        await this.embeddingService.saveSuggestion(sessionUser.id, roomId, messageId, suggestion);
-      }
-
-      response.status(200).json({ suggestion });
-    } catch (error: any) {
-      this.logger.error(`Failed to generate auto-reply suggestion for user ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
-      response.status(500).json({ message: "Failed to generate auto-reply suggestion" });
-    }
-  }
-
-  @Get("me/rocket-rooms/:roomId/messages")
-  async getRoomMessages(
-    @Req() request: Request,
-    @Res() response: Response,
-  ) {
-    const sessionUser = request.user as SessionUser | undefined;
-    if (!request.isAuthenticated() || !sessionUser) {
-      response.status(401).json({ message: "Unauthorized" });
-      return;
-    }
-
-    const roomId = request.params.roomId as string;
-    if (!roomId) {
-      response.status(400).json({ message: "roomId is required" });
-      return;
-    }
-
-    try {
-      const messages = await this.rocketSyncService.findMessagesByRoomId(sessionUser.id, roomId);
-      response.status(200).json({ messages });
-    } catch (error: any) {
-      this.logger.error(`Failed to fetch room messages for user ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
-      response.status(500).json({ message: "Failed to fetch room messages" });
-    }
-  }
-
-  @Get("me/rocket-rooms/:roomId/summary")
-  async getRoomSummary(@Req() request: Request, @Res() response: Response) {
-    const sessionUser = request.user as SessionUser | undefined;
-    if (!request.isAuthenticated() || !sessionUser) {
-      response.status(401).json({ message: "Unauthorized" });
-      return;
-    }
-
-    const roomId = request.params.roomId as string;
-    if (!roomId) {
-      response.status(400).json({ message: "roomId is required" });
-      return;
-    }
-
-    try {
-      const summary = await this.rocketSyncService.findSummaryByRoomId(sessionUser.id, roomId);
-      response.status(200).json({ summary });
-    } catch (error: any) {
-      this.logger.error(`Failed to fetch room summary for user ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
-      response.status(500).json({ message: "Failed to fetch room summary" });
-    }
-  }
-
-  @Post("me/rocket-rooms/:roomId/messages")
-  async postRoomMessage(
-    @Req() request: Request,
-    @Res() response: Response,
-    @Body() body: { text: string },
-  ) {
-    const sessionUser = request.user as SessionUser | undefined;
-    if (!request.isAuthenticated() || !sessionUser) {
-      response.status(401).json({ message: "Unauthorized" });
-      return;
-    }
-
-    const roomId = request.params.roomId as string;
-    const text = body.text?.trim();
-
-    if (!roomId || !text) {
-      response.status(400).json({ message: "roomId and text are required" });
-      return;
-    }
-
-    try {
-      const message = await this.rocketChatService.postMessage(
-        sessionUser.id,
-        sessionUser.email,
-        roomId,
-        text,
-      );
-
-      // Auto-dismiss any pending bot notifications for this room since the user has replied manually
-      await this.botNotificationService.dismissByRoomId(sessionUser.id, roomId);
-
-      response.status(200).json({ success: true, message });
-    } catch (error: any) {
-      this.logger.error(`Failed to post message for user ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
-      response.status(500).json({ message: error.message || "Failed to post message to Rocket.Chat" });
-    }
-  }
-
-  @Post("internal/bot-post-message")
-  async internalBotPostMessage(
-    @Req() request: Request,
-    @Res() response: Response,
-    @Body() body: { googleId: string; email: string; roomId: string; text: string },
-  ) {
-    try {
-      if (!this.isInternalRequestAuthorized(request)) {
-        response.status(401).json({ message: "Unauthorized" });
+      if (!subscription) {
+        response.status(404).json({ message: "Subscription not found" });
         return;
       }
-    } catch {
-      response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
-      return;
-    }
 
-    const { googleId, email, roomId, text } = body;
-    if (!googleId || !email || !roomId || !text) {
-      response.status(400).json({ message: "googleId, email, roomId, and text are required" });
+      response.status(200).json({ success: true });
+    } catch (error: any) {
+      this.logger.error(`Failed to update subscription preference color for ${sessionUser.id}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
+  }
+
+  @Get("me/bot-activation-preferences")
+  async getBotActivationPreferences(@Req() request: Request, @Res() response: Response) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
       return;
     }
 
     try {
-      const message = await this.rocketChatService.postMessage(googleId, email, roomId, text);
-      response.status(200).json({ success: true, message });
+      const user = await this.usersService.findByGoogleId(sessionUser.id);
+      response.status(200).json(this.mapBotActivationPreferences(user));
     } catch (error: any) {
-      this.logger.error(`Internal: Failed to post message for user ${googleId} in room ${roomId}: ${error.message}`, error.stack);
-      response.status(500).json({ message: error.message || "Failed to post message" });
+      this.logger.error(`Failed to get bot activation preferences for ${sessionUser.id}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
+  }
+
+  @Post("me/bot-activation-preferences")
+  async updateBotActivationPreferences(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: BotActivationPreferencesBody,
+  ) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const { startTime, endTime, startDate, endDate } = body;
+
+    if (startTime && !this.isValidTime(startTime)) {
+      response.status(400).json({ message: "startTime must be in HH:mm format" });
+      return;
+    }
+
+    if (endTime && !this.isValidTime(endTime)) {
+      response.status(400).json({ message: "endTime must be in HH:mm format" });
+      return;
+    }
+
+    if (startDate && !this.isValidDate(startDate)) {
+      response.status(400).json({ message: "startDate must be in YYYY-MM-DD format" });
+      return;
+    }
+
+    if (endDate && !this.isValidDate(endDate)) {
+      response.status(400).json({ message: "endDate must be in YYYY-MM-DD format" });
+      return;
+    }
+
+    try {
+      const user = await this.usersService.updateBotActivationPreferences(sessionUser.id, body);
+      response.status(200).json(this.mapBotActivationPreferences(user));
+    } catch (error: any) {
+      this.logger.error(`Failed to update bot activation preferences for ${sessionUser.id}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
+  }
+
+  @Get("me/rocket-integration")
+  async getRocketIntegration(@Req() request: Request, @Res() response: Response) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    try {
+      const user = await this.usersService.findByGoogleId(sessionUser.id);
+      if (!user?.rocketIntegration) {
+        response.status(404).json({ message: "Rocket.Chat integration not found" });
+        return;
+      }
+
+      response.status(200).json({
+        userId: user.rocketIntegration.userId,
+        syncStatus: user.rocketSyncStatus,
+        lastSyncError: user.rocketLastSyncError,
+      });
+    } catch (error: any) {
+      this.logger.error(`Failed to get rocket integration for ${sessionUser.id}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
+  }
+
+  @Post("me/rocket-integration")
+  async connectRocketChat(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: RocketIntegrationBody,
+  ) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const { rocketUserToken, rocketUserId } = body;
+    if (!rocketUserToken || !rocketUserId) {
+      response.status(400).json({ message: "rocketUserToken and rocketUserId are required" });
+      return;
+    }
+
+    try {
+      await this.usersService.saveRocketIntegration(sessionUser.id, {
+        userId: rocketUserId,
+        userToken: rocketUserToken,
+      });
+
+      // Trigger initial sync
+      await this.triggerWorkerSyncForUser(sessionUser.id);
+
+      response.status(200).json({ success: true });
+    } catch (error: any) {
+      this.logger.error(`Failed to connect Rocket.Chat for ${sessionUser.id}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Failed to connect Rocket.Chat" });
+    }
+  }
+
+  @Post("me/rocket-integration/disconnect")
+  async disconnectRocketChat(@Req() request: Request, @Res() response: Response) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    try {
+      await this.usersService.clearRocketIntegration(sessionUser.id);
+      await this.rocketSyncService.clearRocketDataForUser(sessionUser.id);
+      response.status(200).json({ success: true });
+    } catch (error: any) {
+      this.logger.error(`Failed to disconnect Rocket.Chat for ${sessionUser.id}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Failed to disconnect Rocket.Chat" });
     }
   }
 }
