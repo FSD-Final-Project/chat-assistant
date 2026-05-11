@@ -142,6 +142,7 @@ export class UsersController {
     private readonly rocketSyncService: RocketSyncService,
     private readonly embeddingService: EmbeddingService,
     private readonly botNotificationService: BotNotificationService,
+    private readonly rocketChatService: RocketChatService,
   ) { }
 
   private isInternalRequestAuthorized(request: Request): boolean {
@@ -1044,8 +1045,12 @@ export class UsersController {
     }
 
     try {
+      const user = await this.usersService.findByGoogleId(sessionUser.id);
+      const rocketIntegration = this.usersService.getDecryptedRocketIntegration(user);
       const subscriptions = await this.rocketSyncService.listSubscriptions(sessionUser.id);
+      
       response.status(200).json({
+        myRocketUserId: rocketIntegration?.userId,
         subscriptions: subscriptions.map((subscription) => ({
           id: subscription.subscriptionId,
           roomId: subscription.roomId,
@@ -1536,6 +1541,71 @@ export class UsersController {
     } catch (error: any) {
       this.logger.error(`Failed to fetch room messages for user ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
       response.status(500).json({ message: "Failed to fetch room messages" });
+    }
+  }
+
+  @Post("me/rocket-rooms/:roomId/messages")
+  async postRoomMessage(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: { text: string },
+  ) {
+    const sessionUser = request.user as SessionUser | undefined;
+    if (!request.isAuthenticated() || !sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const roomId = request.params.roomId as string;
+    const text = body.text?.trim();
+
+    if (!roomId || !text) {
+      response.status(400).json({ message: "roomId and text are required" });
+      return;
+    }
+
+    try {
+      const message = await this.rocketChatService.postMessage(
+        sessionUser.id,
+        sessionUser.email,
+        roomId,
+        text,
+      );
+      response.status(200).json({ success: true, message });
+    } catch (error: any) {
+      this.logger.error(`Failed to post message for user ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: error.message || "Failed to post message to Rocket.Chat" });
+    }
+  }
+
+  @Post("internal/bot-post-message")
+  async internalBotPostMessage(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: { googleId: string; email: string; roomId: string; text: string },
+  ) {
+    try {
+      if (!this.isInternalRequestAuthorized(request)) {
+        response.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+    } catch {
+      response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
+      return;
+    }
+
+    const { googleId, email, roomId, text } = body;
+    if (!googleId || !email || !roomId || !text) {
+      response.status(400).json({ message: "googleId, email, roomId, and text are required" });
+      return;
+    }
+
+    try {
+      const message = await this.rocketChatService.postMessage(googleId, email, roomId, text);
+      response.status(200).json({ success: true, message });
+    } catch (error: any) {
+      this.logger.error(`Internal: Failed to post message for user ${googleId} in room ${roomId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: error.message || "Failed to post message" });
     }
   }
 }

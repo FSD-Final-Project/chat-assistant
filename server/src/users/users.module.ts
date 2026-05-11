@@ -31,6 +31,7 @@ import { RocketSyncService } from "./rocket-sync.service";
 import { UsersService } from "./users.service";
 import { EmbeddingService } from "./embedding.service";
 import { ChunkProcessorService } from "./chunk-processor.service";
+import { RocketChatService } from "./rocket-chat.service";
 
 @Module({
   imports: [
@@ -45,7 +46,7 @@ import { ChunkProcessorService } from "./chunk-processor.service";
     ]),
   ],
   controllers: [UsersController],
-  providers: [UsersService, RocketSyncService, EmbeddingService, ChunkProcessorService, BotNotificationService],
-  exports: [UsersService, RocketSyncService, EmbeddingService, BotNotificationService],
+  providers: [UsersService, RocketSyncService, EmbeddingService, ChunkProcessorService, BotNotificationService, RocketChatService],
+  exports: [UsersService, RocketSyncService, EmbeddingService, BotNotificationService, RocketChatService],
 })
 export class UsersModule { }

@@ -9,6 +9,8 @@ interface TodaySummaryDetailsProps {
     isLoadingSuggestion: boolean;
     suggestion: string | null;
     user: any;
+    onSendSuggestion: (text: string) => Promise<void>;
+    isSendingSuggestion: boolean;
 }
 
 export function TodaySummaryDetails({
@@ -18,7 +20,9 @@ export function TodaySummaryDetails({
     sortedMessages,
     isLoadingSuggestion,
     suggestion,
-    user
+    user,
+    onSendSuggestion,
+    isSendingSuggestion
 }: TodaySummaryDetailsProps) {
     const styles = makeStyles();
 
@@ -98,7 +102,14 @@ export function TodaySummaryDetails({
                         <Loader2 className="w-4 h-4 animate-spin text-muted-foreground mt-2" />
                     ) : suggestion ? (
                         <div className={styles.suggestionChips}>
-                            <button className={styles.suggestionChip}>
+                            <button 
+                                className={styles.suggestionChip}
+                                onClick={() => onSendSuggestion(suggestion)}
+                                disabled={isSendingSuggestion}
+                            >
+                                {isSendingSuggestion ? (
+                                    <Loader2 className="w-3 h-3 animate-spin inline mr-1" />
+                                ) : null}
                                 {suggestion}
                             </button>
                         </div>

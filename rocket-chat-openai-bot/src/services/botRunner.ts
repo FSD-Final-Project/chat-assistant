@@ -141,21 +141,18 @@ export class BotRunner {
       const suggestedReply = contextPayload.suggestedReply || "I'm sorry, I couldn't generate a suggestion.";
 
       if (contextPayload.subscription.preferenceColor === "green") {
-        const postedMessage = await this.rocketChatClient.postMessage(activeSubscription.roomId, suggestedReply);
-        if (postedMessage) {
-          await this.botNotificationStore.saveSuggestion({
-            auth: this.auth,
-            roomId: activeSubscription.roomId,
-            messageId: message._id,
-            suggestion: suggestedReply,
-          });
-          await this.subscriptionPreferenceStore.syncOutgoingMessage(
-            this.auth,
-            activeSubscription.roomId,
-            activeSubscription.roomType,
-            postedMessage,
-          );
-        }
+        await this.botNotificationStore.postMessage({
+          auth: this.auth,
+          roomId: activeSubscription.roomId,
+          text: suggestedReply,
+        });
+        
+        await this.botNotificationStore.saveSuggestion({
+          auth: this.auth,
+          roomId: activeSubscription.roomId,
+          messageId: message._id,
+          suggestion: suggestedReply,
+        });
         await this.updateSummary(activeSubscription, message._id, incomingText, suggestedReply, contextPayload.currentSummary?.summary);
         console.log(`[${activeSubscription.roomId}] Bot: ${suggestedReply}`);
       } else {
@@ -179,10 +176,11 @@ export class BotRunner {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error(`[${activeSubscription.roomId}] Failed to handle message: ${errorMessage}`);
       if (activeSubscription.preferenceColor === "green") {
-        await this.rocketChatClient.postMessage(
-          activeSubscription.roomId,
-          "I hit an internal error while generating a reply. Please try again.",
-        );
+        await this.botNotificationStore.postMessage({
+          auth: this.auth,
+          roomId: activeSubscription.roomId,
+          text: "I hit an internal error while generating a reply. Please try again.",
+        });
       }
     } finally {
       this.state.markProcessed(message._id);

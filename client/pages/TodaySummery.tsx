@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { TimePicker } from "@/components/ui/time-picker";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthProvider";
 
 import { TodaySummaryTabs } from "@/components/today-summary/TodaySummaryTabs";
@@ -21,6 +21,7 @@ const tabs = ["All Chats", "Pending", "Completed"];
 
 export default function TodaySummary() {
     const { user } = useAuth();
+    const queryClient = useQueryClient();
     const [activeTab, setActiveTab] = useState("All Chats");
     const [activeChatId, setActiveChatId] = useState<string | null>(null);
     const [startTime, setStartTime] = useState("15:00");
@@ -64,12 +65,14 @@ export default function TodaySummary() {
     const lastMessage = sortedMessages.length > 0 ? sortedMessages[sortedMessages.length - 1] : null;
     const lastMessageText = lastMessage ? String(lastMessage.payload?.msg || "") : "";
     const lastMessageId = lastMessage ? (lastMessage.messageId || lastMessage._id) : null;
+    const lastMessageSenderId = lastMessage?.payload?.u?._id;
+    const isLastMessageFromMe = !!lastMessageSenderId && lastMessageSenderId === subscriptionsData?.myRocketUserId;
 
     // Fetch Auto-Reply Suggestion
     const { data: suggestionData, isLoading: isLoadingSuggestion } = useQuery({
         queryKey: ["rocket-suggestion", activeChatId, lastMessageText],
         queryFn: async () => {
-            if (!activeChatId || !lastMessageText) return null;
+            if (!activeChatId || !lastMessageText || isLastMessageFromMe) return null;
             const res = await fetch(`/users/me/rocket-rooms/${activeChatId}/auto-reply-suggestion`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -78,10 +81,33 @@ export default function TodaySummary() {
             if (!res.ok) throw new Error("Failed to fetch suggestion");
             return res.json();
         },
-        enabled: !!activeChatId && !!lastMessageText
+        enabled: !!activeChatId && !!lastMessageText && !isLastMessageFromMe
     });
 
     const suggestion = suggestionData?.suggestion || null;
+
+    // Post Message Mutation
+    const postMessageMutation = useMutation({
+        mutationFn: async (text: string) => {
+            if (!activeChatId) return null;
+            const res = await fetch(`/users/me/rocket-rooms/${activeChatId}/messages`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text })
+            });
+            if (!res.ok) throw new Error("Failed to post message");
+            return res.json();
+        },
+        onSuccess: () => {
+            // Invalidate messages and suggestion (since context changed)
+            queryClient.invalidateQueries({ queryKey: ["rocket-messages", activeChatId] });
+            queryClient.invalidateQueries({ queryKey: ["rocket-suggestion", activeChatId] });
+        }
+    });
+
+    const handleSendSuggestion = async (text: string) => {
+        await postMessageMutation.mutateAsync(text);
+    };
 
     // Formatted Chat Groups
     const formattedChatGroups = subscriptions.map((sub: any) => {
@@ -113,6 +139,8 @@ export default function TodaySummary() {
                     isLoadingSuggestion={isLoadingSuggestion}
                     suggestion={suggestion}
                     user={user}
+                    onSendSuggestion={handleSendSuggestion}
+                    isSendingSuggestion={postMessageMutation.isPending}
                 />
 
                 {/* Chat Groups */}
