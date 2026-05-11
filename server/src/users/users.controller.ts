@@ -4,6 +4,7 @@ import type { SessionUser } from "../auth/session-user";
 import { BotNotificationService } from "./bot-notification.service";
 import { RocketSyncService } from "./rocket-sync.service";
 import { UsersService } from "./users.service";
+import { RocketChatService } from "./rocket-chat.service";
 import { EmbeddingService } from "./embedding.service";
 import type { RocketPreferenceColor } from "./schemas/rocket-subscription.schema";
 
@@ -1355,6 +1356,24 @@ export class UsersController {
       return;
     }
 
+    response.status(200).json({ success: true });
+  }
+
+  @Post("me/bot-notifications/rooms/:roomId/dismiss")
+  async dismissMyRoomBotNotifications(@Req() request: Request, @Res() response: Response) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const roomId = request.params.roomId as string;
+    if (!roomId) {
+      response.status(400).json({ message: "roomId is required" });
+      return;
+    }
+
+    await this.botNotificationService.dismissByRoomId(sessionUser.id, roomId);
     response.status(200).json({ success: true });
   }
 

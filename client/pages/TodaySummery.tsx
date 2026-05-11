@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { TimePicker } from "@/components/ui/time-picker";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -61,7 +61,14 @@ export default function TodaySummary() {
     const recentMessages = messagesData?.messages || [];
     
     // Sort messages so the oldest is first, newest is at the bottom
-    const sortedMessages = [...recentMessages].reverse();
+    const sortedMessages = useMemo(() => {
+        return [...recentMessages].sort((a, b) => {
+            const dateA = new Date(a.payload?.ts?.$date || a.payload?.ts).getTime();
+            const dateB = new Date(b.payload?.ts?.$date || b.payload?.ts).getTime();
+            return dateA - dateB;
+        });
+    }, [recentMessages]);
+
     const lastMessage = sortedMessages.length > 0 ? sortedMessages[sortedMessages.length - 1] : null;
     const lastMessageText = lastMessage ? String(lastMessage.payload?.msg || "") : "";
     const lastMessageId = lastMessage ? (lastMessage.messageId || lastMessage._id) : null;
@@ -102,6 +109,14 @@ export default function TodaySummary() {
             // Invalidate messages and suggestion (since context changed)
             queryClient.invalidateQueries({ queryKey: ["rocket-messages", activeChatId] });
             queryClient.invalidateQueries({ queryKey: ["rocket-suggestion", activeChatId] });
+
+            // Close relevant notifications
+            if (activeChatId) {
+                fetch(`/users/me/bot-notifications/rooms/${activeChatId}/dismiss`, {
+                    method: "POST",
+                    credentials: "include",
+                }).catch(err => console.error("Failed to dismiss notifications:", err));
+            }
         }
     });
 
