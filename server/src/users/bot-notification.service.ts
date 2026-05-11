@@ -161,6 +161,59 @@ export class BotNotificationService {
     return updatedNotification;
   }
 
+  async aggregateStats(
+    appUserGoogleId: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<{ greenCount: number; manualCount: number; yellowTotal: number; yellowApproved: number }> {
+    const match: Record<string, unknown> = { appUserGoogleId };
+    if (startDate || endDate) {
+      match.createdAt = {
+        ...(startDate ? { $gte: startDate } : {}),
+        ...(endDate ? { $lte: endDate } : {}),
+      };
+    }
+
+    const result = await this.botNotificationModel.aggregate<{
+      greenCount: number;
+      manualCount: number;
+      yellowTotal: number;
+      yellowApproved: number;
+    }>([
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          greenCount: {
+            $sum: { $cond: [{ $eq: ["$preferenceColor", "green"] }, 1, 0] },
+          },
+          manualCount: {
+            $sum: { $cond: [{ $ne: ["$preferenceColor", "green"] }, 1, 0] },
+          },
+          yellowTotal: {
+            $sum: { $cond: [{ $eq: ["$preferenceColor", "yellow"] }, 1, 0] },
+          },
+          yellowApproved: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$preferenceColor", "yellow"] },
+                    { $eq: ["$status", "approved"] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    return result[0] ?? { greenCount: 0, manualCount: 0, yellowTotal: 0, yellowApproved: 0 };
+  }
+
   subscribe(appUserGoogleId: string, listener: () => void): () => void {
     const eventName = this.getEventName(appUserGoogleId);
     this.events.on(eventName, listener);

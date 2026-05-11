@@ -125,6 +125,11 @@ interface ActiveChatsQuery {
   limit?: string;
 }
 
+interface HistoryStatsQuery {
+  start?: string;
+  end?: string;
+}
+
 @Controller("users")
 export class UsersController {
   constructor(
@@ -1076,6 +1081,54 @@ export class UsersController {
             chat.subscription!.subscriptionId,
           )}/avatar`,
         })),
+    });
+  }
+
+  @Get("me/history-stats")
+  async getMyHistoryStats(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Query() query: HistoryStatsQuery,
+  ) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const startDate = query.start ? new Date(query.start) : undefined;
+    const endDate = query.end ? new Date(query.end) : undefined;
+
+    if (startDate && Number.isNaN(startDate.getTime())) {
+      response.status(400).json({ message: "Invalid start date" });
+      return;
+    }
+
+    if (endDate && Number.isNaN(endDate.getTime())) {
+      response.status(400).json({ message: "Invalid end date" });
+      return;
+    }
+
+    const [lineChartData, timeOfDayData, totalChats, botStats] = await Promise.all([
+      this.rocketSyncService.aggregateMessagesByDayAndColor(sessionUser.id, startDate, endDate),
+      this.rocketSyncService.aggregateMessagesByHour(sessionUser.id, startDate, endDate),
+      this.rocketSyncService.countDistinctActiveRooms(sessionUser.id, startDate, endDate),
+      this.botNotificationService.aggregateStats(sessionUser.id, startDate, endDate),
+    ]);
+
+    response.status(200).json({
+      totalChats,
+      lineChartData,
+      timeOfDayData,
+      aiMessages: {
+        auto: botStats.greenCount,
+        manual: botStats.manualCount,
+      },
+      reviewApprovals: {
+        approved: botStats.yellowApproved,
+        total: botStats.yellowTotal,
+      },
+      timeSavedSeconds: botStats.greenCount * 30,
     });
   }
 

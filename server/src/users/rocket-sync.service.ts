@@ -312,6 +312,108 @@ export class RocketSyncService {
       .sort({ updatedAt: -1, createdAt: -1, roomId: 1 });
   }
 
+  async aggregateMessagesByDayAndColor(
+    appUserGoogleId: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<{ date: string; red: number; yellow: number; green: number }[]> {
+    const match: Record<string, unknown> = { appUserGoogleId };
+    if (startDate || endDate) {
+      match.createdAt = {
+        ...(startDate ? { $gte: startDate } : {}),
+        ...(endDate ? { $lte: endDate } : {}),
+      };
+    }
+
+    const rawCounts = await this.messageModel.aggregate<{
+      _id: { date: string; roomId: string };
+      count: number;
+    }>([
+      { $match: match },
+      {
+        $group: {
+          _id: {
+            date: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+            roomId: "$roomId",
+          },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    if (rawCounts.length === 0) return [];
+
+    const roomIds = [...new Set(rawCounts.map((r) => r._id.roomId))];
+    const subscriptions = await this.subscriptionModel
+      .find({ appUserGoogleId, roomId: { $in: roomIds } })
+      .select({ roomId: 1, preferenceColor: 1 });
+
+    const colorByRoomId = new Map(
+      subscriptions.map((s) => [s.roomId, s.preferenceColor] as const),
+    );
+
+    const byDate = new Map<string, { red: number; yellow: number; green: number }>();
+    for (const item of rawCounts) {
+      const color = colorByRoomId.get(item._id.roomId);
+      if (!color) continue;
+      const existing = byDate.get(item._id.date) ?? { red: 0, yellow: 0, green: 0 };
+      existing[color] = (existing[color] ?? 0) + item.count;
+      byDate.set(item._id.date, existing);
+    }
+
+    return [...byDate.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, counts]) => ({ date, ...counts }));
+  }
+
+  async aggregateMessagesByHour(
+    appUserGoogleId: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<{ hour: number; value: number }[]> {
+    const match: Record<string, unknown> = { appUserGoogleId };
+    if (startDate || endDate) {
+      match.createdAt = {
+        ...(startDate ? { $gte: startDate } : {}),
+        ...(endDate ? { $lte: endDate } : {}),
+      };
+    }
+
+    const raw = await this.messageModel.aggregate<{ _id: number; count: number }>([
+      { $match: match },
+      { $group: { _id: { $hour: "$createdAt" }, count: { $sum: 1 } } },
+      { $sort: { _id: 1 } },
+    ]);
+
+    const countByHour = new Map(raw.map((r) => [r._id, r.count]));
+    return Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      value: countByHour.get(hour) ?? 0,
+    }));
+  }
+
+  async countDistinctActiveRooms(
+    appUserGoogleId: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<number> {
+    const match: Record<string, unknown> = { appUserGoogleId };
+    if (startDate || endDate) {
+      match.createdAt = {
+        ...(startDate ? { $gte: startDate } : {}),
+        ...(endDate ? { $lte: endDate } : {}),
+      };
+    }
+
+    const result = await this.messageModel.aggregate<{ total: number }>([
+      { $match: match },
+      { $group: { _id: "$roomId" } },
+      { $count: "total" },
+    ]);
+
+    return result[0]?.total ?? 0;
+  }
+
   async listActiveChats(
     appUserGoogleId: string,
     options: {
