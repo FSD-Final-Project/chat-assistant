@@ -21,6 +21,15 @@ export interface ManagedSubscription {
   preferenceColor: PreferenceColor;
 }
 
+export interface BotActivationPreferences {
+  timeEnabled: boolean;
+  startTime: string;
+  endTime: string;
+  dateEnabled: boolean;
+  startDate?: string;
+  endDate?: string;
+}
+
 export interface SummaryContextItem {
   subscriptionId: string;
   roomId: string;

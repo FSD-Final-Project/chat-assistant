@@ -57,6 +57,27 @@ interface RocketSubscriptionsResponse {
     subscriptions?: RocketSubscriptionResponseItem[];
 }
 
+interface BotActivationPreferences {
+    timeEnabled: boolean;
+    startTime: string;
+    endTime: string;
+    dateEnabled: boolean;
+    startDate?: string;
+    endDate?: string;
+}
+
+interface BotActivationPreferencesResponse {
+    botActivationPreferences?: BotActivationPreferences;
+    message?: string;
+}
+
+const defaultBotActivationPreferences: BotActivationPreferences = {
+    timeEnabled: false,
+    startTime: "15:00",
+    endTime: "20:30",
+    dateEnabled: false,
+};
+
 function mapSubscriptionToMember(subscription: RocketSubscriptionResponseItem): GroupMember {
     const name =
         subscription.payload?.fname ??
@@ -77,6 +98,21 @@ function isColorType(value: string | undefined): value is ColorType {
     return value === "red" || value === "yellow" || value === "green";
 }
 
+function dateToYmd(value: Date | undefined): string | undefined {
+    if (!value) return undefined;
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+}
+
+function ymdToDate(value: string | undefined): Date | undefined {
+    if (!value) return undefined;
+    const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
+    if (!year || !month || !day) return undefined;
+    return new Date(year, month - 1, day);
+}
+
 export default function Preferences() {
     const [groups, setGroups] = useState<ColorGroups>(initialGroups);
     const [searchValue, setSearchValue] = useState("");
@@ -87,10 +123,13 @@ export default function Preferences() {
     const [syncStatus, setSyncStatus] = useState<RocketSubscriptionsResponse["sync"]>();
 
     // Time pickers state
-    const [startTime, setStartTime] = useState("15:00");
-    const [endTime, setEndTime] = useState("20:30");
-    const [startDate, setStartDate] = useState<Date | undefined>(new Date(2030, 6, 25));
-    const [endDate, setEndDate] = useState<Date | undefined>(new Date(2030, 6, 29));
+    const [isTimeEnabled, setIsTimeEnabled] = useState(defaultBotActivationPreferences.timeEnabled);
+    const [startTime, setStartTime] = useState(defaultBotActivationPreferences.startTime);
+    const [endTime, setEndTime] = useState(defaultBotActivationPreferences.endTime);
+    const [isDateEnabled, setIsDateEnabled] = useState(defaultBotActivationPreferences.dateEnabled);
+    const [startDate, setStartDate] = useState<Date | undefined>(undefined);
+    const [endDate, setEndDate] = useState<Date | undefined>(undefined);
+    const [isSavingActivationPreferences, setIsSavingActivationPreferences] = useState(false);
     const [answerTime, setAnswerTime] = useState("03:00");
 
     const sensors = useSensors(
@@ -151,6 +190,101 @@ export default function Preferences() {
     useEffect(() => {
         void loadSubscriptions();
     }, [loadSubscriptions]);
+
+    const applyBotActivationPreferences = useCallback((preferences: BotActivationPreferences) => {
+        setIsTimeEnabled(preferences.timeEnabled);
+        setStartTime(preferences.startTime);
+        setEndTime(preferences.endTime);
+        setIsDateEnabled(preferences.dateEnabled);
+        setStartDate(ymdToDate(preferences.startDate));
+        setEndDate(ymdToDate(preferences.endDate));
+    }, []);
+
+    const loadBotActivationPreferences = useCallback(async () => {
+        try {
+            const response = await fetch("/users/me/bot-activation-preferences", {
+                credentials: "include",
+            });
+            const payload = (await response.json()) as BotActivationPreferencesResponse;
+            if (!response.ok) {
+                throw new Error(payload.message ?? "Failed to load bot activation preferences");
+            }
+
+            applyBotActivationPreferences({
+                ...defaultBotActivationPreferences,
+                ...payload.botActivationPreferences,
+            });
+        } catch (error) {
+            toast({
+                title: "Failed to load bot activation preferences",
+                description:
+                    error instanceof Error ? error.message : "Failed to load bot activation preferences",
+                variant: "destructive",
+            });
+        }
+    }, [applyBotActivationPreferences]);
+
+    useEffect(() => {
+        void loadBotActivationPreferences();
+    }, [loadBotActivationPreferences]);
+
+    const persistBotActivationPreferences = async (preferences: BotActivationPreferences) => {
+        const response = await fetch("/users/me/bot-activation-preferences", {
+            method: "POST",
+            credentials: "include",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(preferences),
+        });
+
+        const payload = (await response.json()) as BotActivationPreferencesResponse;
+        if (!response.ok) {
+            throw new Error(payload.message ?? "Failed to save bot activation preferences");
+        }
+
+        if (payload.botActivationPreferences) {
+            applyBotActivationPreferences({
+                ...defaultBotActivationPreferences,
+                ...payload.botActivationPreferences,
+            });
+        }
+    };
+
+    const saveBotActivationPreferences = async (overrides: Partial<BotActivationPreferences>) => {
+        const preferences: BotActivationPreferences = {
+            timeEnabled: isTimeEnabled,
+            startTime,
+            endTime,
+            dateEnabled: isDateEnabled,
+            startDate: dateToYmd(startDate),
+            endDate: dateToYmd(endDate),
+            ...overrides,
+        };
+
+        if (preferences.dateEnabled && (!preferences.startDate || !preferences.endDate)) {
+            toast({
+                title: "Choose both dates",
+                description: "Start and end dates are required when date activation is enabled.",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        setIsSavingActivationPreferences(true);
+        try {
+            await persistBotActivationPreferences(preferences);
+        } catch (error) {
+            toast({
+                title: "Failed to save bot activation preferences",
+                description:
+                    error instanceof Error ? error.message : "Failed to save bot activation preferences",
+                variant: "destructive",
+            });
+        } finally {
+            setIsSavingActivationPreferences(false);
+        }
+    };
 
     const isSyncInProgress = syncStatus?.status === "pending" || syncStatus?.status === "syncing";
 
@@ -375,18 +509,81 @@ export default function Preferences() {
                     </h3>
 
                     <div className="space-y-4">
+                        <div className="flex items-center justify-between gap-4">
+                            <span className="text-card-light-foreground">Activate by time of day:</span>
+                            <Switch
+                                checked={isTimeEnabled}
+                                disabled={isSavingActivationPreferences}
+                                onCheckedChange={(checked) => {
+                                    setIsTimeEnabled(checked);
+                                    void saveBotActivationPreferences({ timeEnabled: checked });
+                                }}
+                            />
+                        </div>
+
                         {/* Time Range */}
-                        <div className="flex flex-col items-stretch justify-center gap-3 rounded-3xl bg-card-light/50 px-4 py-3 sm:flex-row sm:items-center sm:rounded-full sm:py-2">
-                            <TimePicker value={startTime} onChange={setStartTime} />
+                        <div className={`flex flex-col items-stretch justify-center gap-3 rounded-3xl bg-card-light/50 px-4 py-3 transition-opacity sm:flex-row sm:items-center sm:rounded-full sm:py-2 ${isTimeEnabled ? "" : "opacity-50"}`}>
+                            <TimePicker
+                                value={startTime}
+                                disabled={!isTimeEnabled || isSavingActivationPreferences}
+                                onChange={(value) => {
+                                    setStartTime(value);
+                                    void saveBotActivationPreferences({ startTime: value });
+                                }}
+                            />
                             <span className="text-center text-card-light-foreground/60">To</span>
-                            <TimePicker value={endTime} onChange={setEndTime} />
+                            <TimePicker
+                                value={endTime}
+                                disabled={!isTimeEnabled || isSavingActivationPreferences}
+                                onChange={(value) => {
+                                    setEndTime(value);
+                                    void saveBotActivationPreferences({ endTime: value });
+                                }}
+                            />
+                        </div>
+
+                        <div className="flex items-center justify-between gap-4">
+                            <span className="text-card-light-foreground">Activate by dates:</span>
+                            <Switch
+                                checked={isDateEnabled}
+                                disabled={isSavingActivationPreferences}
+                                onCheckedChange={(checked) => {
+                                    const fallbackDate = new Date();
+                                    const nextStartDate = startDate ?? fallbackDate;
+                                    const nextEndDate = endDate ?? nextStartDate;
+                                    setIsDateEnabled(checked);
+                                    if (checked) {
+                                        setStartDate(nextStartDate);
+                                        setEndDate(nextEndDate);
+                                    }
+                                    void saveBotActivationPreferences({
+                                        dateEnabled: checked,
+                                        startDate: checked ? dateToYmd(nextStartDate) : undefined,
+                                        endDate: checked ? dateToYmd(nextEndDate) : undefined,
+                                    });
+                                }}
+                            />
                         </div>
 
                         {/* Date Range */}
-                        <div className="flex flex-col items-stretch justify-center gap-3 rounded-3xl bg-primary/10 px-4 py-3 sm:flex-row sm:items-center sm:rounded-full sm:py-2">
-                            <DatePicker value={startDate} onChange={setStartDate} />
+                        <div className={`flex flex-col items-stretch justify-center gap-3 rounded-3xl bg-primary/10 px-4 py-3 transition-opacity sm:flex-row sm:items-center sm:rounded-full sm:py-2 ${isDateEnabled ? "" : "opacity-50"}`}>
+                            <DatePicker
+                                value={startDate}
+                                disabled={!isDateEnabled || isSavingActivationPreferences}
+                                onChange={(value) => {
+                                    setStartDate(value);
+                                    void saveBotActivationPreferences({ startDate: dateToYmd(value) });
+                                }}
+                            />
                             <span className="text-center text-card-light-foreground/60">To</span>
-                            <DatePicker value={endDate} onChange={setEndDate} />
+                            <DatePicker
+                                value={endDate}
+                                disabled={!isDateEnabled || isSavingActivationPreferences}
+                                onChange={(value) => {
+                                    setEndDate(value);
+                                    void saveBotActivationPreferences({ endDate: dateToYmd(value) });
+                                }}
+                            />
                         </div>
                     </div>
                 </div>

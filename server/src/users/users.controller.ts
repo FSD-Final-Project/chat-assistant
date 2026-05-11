@@ -83,6 +83,15 @@ interface UpdateRocketSubscriptionPreferenceColorBody {
   preferenceColor?: RocketPreferenceColor;
 }
 
+interface BotActivationPreferencesBody {
+  timeEnabled?: boolean;
+  startTime?: string;
+  endTime?: string;
+  dateEnabled?: boolean;
+  startDate?: string;
+  endDate?: string;
+}
+
 interface InternalBotNotificationBody {
   googleId?: string;
   email?: string;
@@ -236,6 +245,28 @@ export class UsersController {
       typedPayload.u?.username ??
       roomId
     );
+  }
+
+  private isValidTime(value: string | undefined): value is string {
+    return typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+  }
+
+  private isValidDate(value: string | undefined): value is string {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return false;
+    }
+
+    const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
+    const parsed = new Date(year, month - 1, day);
+    return (
+      parsed.getFullYear() === year &&
+      parsed.getMonth() === month - 1 &&
+      parsed.getDate() === day
+    );
+  }
+
+  private mapBotActivationPreferences(user: Parameters<UsersService["getBotActivationPreferences"]>[0]) {
+    return this.usersService.getBotActivationPreferences(user);
   }
 
   private cosineSimilarity(left: number[], right: number[]): number {
@@ -409,7 +440,9 @@ export class UsersController {
     }
 
     const subscriptions = await this.rocketSyncService.listSubscriptions(googleId);
+    const user = await this.usersService.findByGoogleId(googleId);
     response.status(200).json({
+      botActivationPreferences: this.mapBotActivationPreferences(user),
       subscriptions: subscriptions.map((subscription) => ({
         id: subscription.subscriptionId,
         roomId: subscription.roomId,
@@ -417,6 +450,39 @@ export class UsersController {
         preferenceColor: subscription.preferenceColor,
       })),
     });
+  }
+
+  @Post("internal/rocket-sync/trigger-user")
+  async triggerInternalRocketSyncForUser(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: { googleId?: string },
+  ) {
+    try {
+      if (!this.isInternalRequestAuthorized(request)) {
+        response.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+    } catch {
+      response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
+      return;
+    }
+
+    const googleId = body.googleId?.trim();
+    if (!googleId) {
+      response.status(400).json({ message: "googleId is required" });
+      return;
+    }
+
+    try {
+      await this.triggerWorkerSyncForUser(googleId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to trigger worker sync";
+      response.status(500).json({ message });
+      return;
+    }
+
+    response.status(202).json({ success: true });
   }
 
   @Get("internal/rocket-summaries/missing")
@@ -886,6 +952,81 @@ export class UsersController {
         payload: subscription.payload,
         avatarUrl: `/users/me/rocket-subscriptions/${encodeURIComponent(subscription.subscriptionId)}/avatar`,
       })),
+    });
+  }
+
+  @Get("me/bot-activation-preferences")
+  async getMyBotActivationPreferences(@Req() request: Request, @Res() response: Response) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const user = await this.usersService.findByGoogleId(sessionUser.id);
+    if (!user) {
+      response.status(404).json({ message: "User not found" });
+      return;
+    }
+
+    response.status(200).json({
+      botActivationPreferences: this.mapBotActivationPreferences(user),
+    });
+  }
+
+  @Post("me/bot-activation-preferences")
+  async updateMyBotActivationPreferences(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: BotActivationPreferencesBody,
+  ) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const timeEnabled = body.timeEnabled === true;
+    const dateEnabled = body.dateEnabled === true;
+    const startTime = body.startTime?.trim();
+    const endTime = body.endTime?.trim();
+    const startDate = body.startDate?.trim();
+    const endDate = body.endDate?.trim();
+
+    if (!this.isValidTime(startTime) || !this.isValidTime(endTime)) {
+      response.status(400).json({ message: "startTime and endTime must use HH:mm format" });
+      return;
+    }
+
+    if (dateEnabled) {
+      if (!this.isValidDate(startDate) || !this.isValidDate(endDate)) {
+        response.status(400).json({ message: "startDate and endDate must use YYYY-MM-DD format" });
+        return;
+      }
+
+      if (startDate > endDate) {
+        response.status(400).json({ message: "startDate must be before or equal to endDate" });
+        return;
+      }
+    }
+
+    const user = await this.usersService.saveBotActivationPreferences(sessionUser.id, {
+      timeEnabled,
+      startTime,
+      endTime,
+      dateEnabled,
+      startDate: dateEnabled ? startDate : undefined,
+      endDate: dateEnabled ? endDate : undefined,
+    });
+
+    if (!user) {
+      response.status(404).json({ message: "User not found" });
+      return;
+    }
+
+    response.status(200).json({
+      success: true,
+      botActivationPreferences: this.mapBotActivationPreferences(user),
     });
   }
 

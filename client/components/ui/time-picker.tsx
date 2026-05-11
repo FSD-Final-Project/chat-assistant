@@ -13,9 +13,10 @@ interface TimePickerProps {
     value?: string;
     onChange?: (time: string) => void;
     className?: string;
+    disabled?: boolean;
 }
 
-export function TimePicker({ value = "12:00", onChange, className }: TimePickerProps) {
+export function TimePicker({ value = "12:00", onChange, className, disabled = false }: TimePickerProps) {
     const [open, setOpen] = React.useState(false);
 
     const hours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, "0"));
@@ -32,6 +33,7 @@ export function TimePicker({ value = "12:00", onChange, className }: TimePickerP
             <PopoverTrigger asChild>
                 <Button
                     variant="outline"
+                    disabled={disabled}
                     className={cn(
                         "flex items-center gap-2 text-sm bg-white rounded-full px-3 py-1 h-auto border-border text-card-light-foreground hover:bg-muted",
                         className
@@ -48,6 +50,7 @@ export function TimePicker({ value = "12:00", onChange, className }: TimePickerP
                             {hours.map((hour) => (
                                 <button
                                     key={hour}
+                                    disabled={disabled}
                                     onClick={() => handleTimeSelect(hour, selectedMinute)}
                                     className={cn(
                                         "w-full px-2 py-1 text-sm rounded hover:bg-muted text-left",
@@ -64,6 +67,7 @@ export function TimePicker({ value = "12:00", onChange, className }: TimePickerP
                             {minutes.map((minute) => (
                                 <button
                                     key={minute}
+                                    disabled={disabled}
                                     onClick={() => {
                                         handleTimeSelect(selectedHour, minute);
                                         setOpen(false);
