@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { MessageSquare, Sparkles, Bot, Loader2 } from "lucide-react";
 import { makeStyles } from "../../pages/TodaySummery.styles";
 
@@ -9,8 +10,11 @@ interface TodaySummaryDetailsProps {
     isLoadingSuggestion: boolean;
     suggestion: string | null;
     user: any;
+    myRocketUserId?: string;
     onSendSuggestion: (text: string) => Promise<void>;
     isSendingSuggestion: boolean;
+    roomSummary: string | null;
+    isLoadingSummary: boolean;
 }
 
 export function TodaySummaryDetails({
@@ -21,10 +25,26 @@ export function TodaySummaryDetails({
     isLoadingSuggestion,
     suggestion,
     user,
+    myRocketUserId,
     onSendSuggestion,
-    isSendingSuggestion
+    isSendingSuggestion,
+    roomSummary,
+    isLoadingSummary
 }: TodaySummaryDetailsProps) {
     const styles = makeStyles();
+    const listRef = useRef<HTMLDivElement>(null);
+
+    const scrollToBottom = () => {
+        if (listRef.current) {
+            listRef.current.scrollTop = listRef.current.scrollHeight;
+        }
+    };
+
+    useEffect(() => {
+        if (!isLoadingMessages) {
+            scrollToBottom();
+        }
+    }, [sortedMessages, isLoadingMessages, activeChatId]);
 
     if (!activeChatId) {
         return (
@@ -47,14 +67,14 @@ export function TodaySummaryDetails({
                     <MessageSquare className="w-5 h-5 text-primary" />
                     Recent Messages
                 </h3>
-                <div className={styles.messagesList}>
+                <div className={styles.messagesList} ref={listRef}>
                     {isLoadingMessages ? (
                         <div className="flex justify-center items-center h-32">
                             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                         </div>
                     ) : sortedMessages.length > 0 ? (
                         sortedMessages.map((msg: any) => {
-                            const isMe = msg.payload?.u?.username === user?.name || msg.payload?.u?.name === user?.name;
+                            const isMe = msg.payload?.u?._id === myRocketUserId;
                             const senderName = msg.payload?.u?.username || msg.payload?.u?.name || "Unknown";
                             const content = msg.payload?.msg || "";
                             const date = new Date(msg.payload?.ts?.$date || msg.payload?.ts);
@@ -88,7 +108,16 @@ export function TodaySummaryDetails({
                         AI Summary
                     </h4>
                     <p className={styles.summaryText}>
-                        This is a simulated AI summary. The backend does not currently have a summarization endpoint for the entire room, but if it did, the summary would appear here based on the latest context.
+                        {isLoadingSummary ? (
+                            <span className="flex items-center gap-2 italic text-muted-foreground">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                Generating summary...
+                            </span>
+                        ) : roomSummary ? (
+                            roomSummary
+                        ) : (
+                            "No summary available for this chat yet. The background worker will generate one soon."
+                        )}
                     </p>
                 </div>
 

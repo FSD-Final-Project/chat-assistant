@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Bell, Check, Edit3, Send, X } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,7 @@ const colorAccentClass: Record<BotNotificationItem["preferenceColor"], string> =
 
 export function BotNotificationCenter() {
     const { isAuthenticated } = useAuth();
+    const queryClient = useQueryClient();
     const [notifications, setNotifications] = useState<BotNotificationItem[]>([]);
     const [editingNotificationId, setEditingNotificationId] = useState<string | null>(null);
     const [draftReplies, setDraftReplies] = useState<Record<string, string>>({});
@@ -178,6 +180,10 @@ export function BotNotificationCenter() {
 
             setNotifications((prev) => prev.filter((notification) => notification.id !== notificationId));
             setEditingNotificationId((prev) => (prev === notificationId ? null : prev));
+
+            // Refresh the message list in the chat view if it's open
+            queryClient.invalidateQueries({ queryKey: ["rocket-messages"] });
+            
             toast({
                 title: "Reply sent",
                 description: "The approved message was sent to Rocket.Chat.",

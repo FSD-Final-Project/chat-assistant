@@ -5,6 +5,7 @@ import { BotNotificationService } from "./bot-notification.service";
 import { RocketSyncService } from "./rocket-sync.service";
 import { UsersService } from "./users.service";
 import { EmbeddingService } from "./embedding.service";
+import { RocketChatService } from "./rocket-chat.service";
 import type { RocketPreferenceColor } from "./schemas/rocket-subscription.schema";
 
 interface RocketIntegrationBody {
@@ -1544,6 +1545,29 @@ export class UsersController {
     }
   }
 
+  @Get("me/rocket-rooms/:roomId/summary")
+  async getRoomSummary(@Req() request: Request, @Res() response: Response) {
+    const sessionUser = request.user as SessionUser | undefined;
+    if (!request.isAuthenticated() || !sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const roomId = request.params.roomId as string;
+    if (!roomId) {
+      response.status(400).json({ message: "roomId is required" });
+      return;
+    }
+
+    try {
+      const summary = await this.rocketSyncService.findSummaryByRoomId(sessionUser.id, roomId);
+      response.status(200).json({ summary });
+    } catch (error: any) {
+      this.logger.error(`Failed to fetch room summary for user ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Failed to fetch room summary" });
+    }
+  }
+
   @Post("me/rocket-rooms/:roomId/messages")
   async postRoomMessage(
     @Req() request: Request,
@@ -1571,6 +1595,10 @@ export class UsersController {
         roomId,
         text,
       );
+
+      // Auto-dismiss any pending bot notifications for this room since the user has replied manually
+      await this.botNotificationService.dismissByRoomId(sessionUser.id, roomId);
+
       response.status(200).json({ success: true, message });
     } catch (error: any) {
       this.logger.error(`Failed to post message for user ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);

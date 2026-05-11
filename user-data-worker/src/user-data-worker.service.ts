@@ -523,7 +523,7 @@ export class UserDataWorkerService {
           {
             role: "system",
             content:
-              "Summarize this Rocket.Chat conversation for retrieval use. Keep only useful context: stable facts, preferences, ongoing topics, tasks, commitments, and relevant tone cues. Do not mention that this is a conversation, chat, Rocket.Chat, user names unless they matter, or any meta phrases like 'the conversation shows' or 'the user discusses'. Write compact notes, not narration. Stay under 220 words and return only plain summary text.",
+              "Summarize this conversation. Keep it very short, direct, and concise (max 2-3 sentences). Always use 'You' instead of the account owner's full name. Focus only on the latest core discussion, tasks, or status. Return only plain summary text.",
           },
           {
             role: "user",

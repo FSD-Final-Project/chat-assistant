@@ -416,9 +416,12 @@ export class EmbeddingService {
     messageId: string,
     suggestion: string,
   ): Promise<void> {
+    const ttlSeconds = Number.parseInt(process.env.SUGGESTION_CACHE_TTL_SECONDS ?? "86400", 10);
+    const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+
     await this.suggestionModel.findOneAndUpdate(
       { appUserGoogleId, messageId },
-      { $set: { appUserGoogleId, roomId, messageId, suggestion } },
+      { $set: { appUserGoogleId, roomId, messageId, suggestion, expiresAt } },
       { upsert: true, new: true },
     );
   }

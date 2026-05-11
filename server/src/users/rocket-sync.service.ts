@@ -173,8 +173,14 @@ export class RocketSyncService {
       }));
 
     if (messageOps.length > 0) {
-      const result = await this.messageModel.bulkWrite(messageOps, { ordered: false });
-      this.logger.log(`Upserted ${messageOps.length} messages for roomId: ${roomId}. Modified: ${result.modifiedCount}, Upserted: ${result.upsertedCount}`);
+      this.logger.log(`Upserting ${messageOps.length} messages for user ${appUserGoogleId}, roomId: ${roomId}`);
+      try {
+        const result = await this.messageModel.bulkWrite(messageOps, { ordered: false });
+        this.logger.log(`Upserted ${messageOps.length} messages for roomId: ${roomId}. Modified: ${result.modifiedCount}, Upserted: ${result.upsertedCount}`);
+      } catch (error: any) {
+        this.logger.error(`Failed to bulk upsert messages for roomId ${roomId}: ${error.message}`, error.stack);
+        throw error;
+      }
     }
   }
 
@@ -260,7 +266,7 @@ export class RocketSyncService {
   ): Promise<RocketMessageDocument[]> {
     return this.messageModel
       .find({ appUserGoogleId, roomId })
-      .sort({ "payload.ts": -1 })
+      .sort({ "payload.ts": -1, createdAt: -1 })
       .limit(limit);
   }
 
@@ -276,6 +282,9 @@ export class RocketSyncService {
     sourceMessageCount?: number;
     source: "worker" | "bot";
   }): Promise<RocketSummaryDocument | null> {
+    const ttlSeconds = Number.parseInt(process.env.SUMMARY_CACHE_TTL_SECONDS ?? "86400", 10);
+    const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+
     return this.summaryModel.findOneAndUpdate(
       {
         appUserGoogleId: input.appUserGoogleId,
@@ -293,6 +302,7 @@ export class RocketSyncService {
           lastMessageId: input.lastMessageId,
           sourceMessageCount: input.sourceMessageCount,
           source: input.source,
+          expiresAt,
         },
       },
       { new: true, upsert: true },

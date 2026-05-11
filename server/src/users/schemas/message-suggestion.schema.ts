@@ -16,8 +16,11 @@ export class MessageSuggestionRecord {
 
   @Prop({ required: true })
   suggestion!: string;
+
+  @Prop({ type: Date, required: true, index: true })
+  expiresAt!: Date;
 }
 
 export const MessageSuggestionSchema = SchemaFactory.createForClass(MessageSuggestionRecord);
 MessageSuggestionSchema.index({ appUserGoogleId: 1, messageId: 1 }, { unique: true });
-MessageSuggestionSchema.index({ createdAt: 1 }, { expireAfterSeconds: 86400 * 7 }); // Keep for 7 days
+MessageSuggestionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

@@ -34,7 +34,11 @@ export class RocketSummaryRecord {
 
   @Prop({ required: true, enum: ["worker", "bot"], default: "worker" })
   source!: "worker" | "bot";
+
+  @Prop({ type: Date, index: true })
+  expiresAt?: Date;
 }
 
 export const RocketSummarySchema = SchemaFactory.createForClass(RocketSummaryRecord);
 RocketSummarySchema.index({ appUserGoogleId: 1, subscriptionId: 1 }, { unique: true });
+RocketSummarySchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

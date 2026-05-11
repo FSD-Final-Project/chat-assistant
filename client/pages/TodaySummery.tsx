@@ -60,8 +60,27 @@ export default function TodaySummary() {
 
     const recentMessages = messagesData?.messages || [];
     
-    // Sort messages so the oldest is first, newest is at the bottom
-    const sortedMessages = [...recentMessages].reverse();
+    // Fetch Room Summary
+    const { data: roomSummaryData, isLoading: isLoadingSummary } = useQuery({
+        queryKey: ["rocket-summary", activeChatId],
+        queryFn: async () => {
+            if (!activeChatId) return null;
+            const res = await fetch(`/users/me/rocket-rooms/${activeChatId}/summary`);
+            if (!res.ok) throw new Error("Failed to fetch summary");
+            return res.json();
+        },
+        enabled: !!activeChatId
+    });
+
+    const roomSummary = roomSummaryData?.summary?.summary || null;
+    
+    // Sort messages explicitly by timestamp: oldest at top (0), newest at bottom (N)
+    const sortedMessages = [...recentMessages].sort((a, b) => {
+        const timeA = new Date(a.payload?.ts?.$date || a.payload?.ts).getTime();
+        const timeB = new Date(b.payload?.ts?.$date || b.payload?.ts).getTime();
+        return timeA - timeB;
+    });
+
     const lastMessage = sortedMessages.length > 0 ? sortedMessages[sortedMessages.length - 1] : null;
     const lastMessageText = lastMessage ? String(lastMessage.payload?.msg || "") : "";
     const lastMessageId = lastMessage ? (lastMessage.messageId || lastMessage._id) : null;
@@ -98,8 +117,18 @@ export default function TodaySummary() {
             if (!res.ok) throw new Error("Failed to post message");
             return res.json();
         },
-        onSuccess: () => {
-            // Invalidate messages and suggestion (since context changed)
+        onSuccess: (data) => {
+            // Optimistically update the message list
+            if (data?.message) {
+                queryClient.setQueryData(["rocket-messages", activeChatId], (old: any) => {
+                    if (!old) return old;
+                    return {
+                        ...old,
+                        messages: [data.message, ...old.messages]
+                    };
+                });
+            }
+            // Invalidate to sync with server
             queryClient.invalidateQueries({ queryKey: ["rocket-messages", activeChatId] });
             queryClient.invalidateQueries({ queryKey: ["rocket-suggestion", activeChatId] });
         }
@@ -139,8 +168,11 @@ export default function TodaySummary() {
                     isLoadingSuggestion={isLoadingSuggestion}
                     suggestion={suggestion}
                     user={user}
+                    myRocketUserId={subscriptionsData?.myRocketUserId}
                     onSendSuggestion={handleSendSuggestion}
                     isSendingSuggestion={postMessageMutation.isPending}
+                    roomSummary={roomSummary}
+                    isLoadingSummary={isLoadingSummary}
                 />
 
                 {/* Chat Groups */}

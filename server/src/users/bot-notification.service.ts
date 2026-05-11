@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { EventEmitter } from "events";
+import { RocketChatService } from "./rocket-chat.service";
 import { BotNotificationRecord, type BotNotificationDocument, type BotNotificationKind } from "./schemas/bot-notification.schema";
 import type { RocketPreferenceColor } from "./schemas/rocket-subscription.schema";
 import { UsersService } from "./users.service";
@@ -29,6 +30,7 @@ export class BotNotificationService {
     @InjectModel(BotNotificationRecord.name)
     private readonly botNotificationModel: Model<BotNotificationDocument>,
     private readonly usersService: UsersService,
+    private readonly rocketChatService: RocketChatService,
   ) {}
 
   async createOrUpdatePending(input: CreateBotNotificationInput): Promise<BotNotificationDocument> {
@@ -107,6 +109,25 @@ export class BotNotificationService {
     return notification;
   }
 
+  async dismissByRoomId(appUserGoogleId: string, roomId: string): Promise<void> {
+    const result = await this.botNotificationModel.updateMany(
+      {
+        appUserGoogleId,
+        roomId,
+        status: "pending",
+      },
+      {
+        $set: {
+          status: "dismissed",
+        },
+      },
+    );
+
+    if (result.modifiedCount > 0) {
+      await this.emitPendingChanged(appUserGoogleId);
+    }
+  }
+
   async approveAndSend(
     appUserGoogleId: string,
     notificationId: string,
@@ -117,34 +138,12 @@ export class BotNotificationService {
       return null;
     }
 
-    const user = await this.usersService.findByGoogleId(appUserGoogleId);
-    const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
-    if (!rocketAuth) {
-      throw new Error("Rocket.Chat credentials not found for user");
-    }
-
-    const rocketUrl = process.env.RC_URL?.trim();
-    if (!rocketUrl) {
-      throw new Error("Missing RC_URL on server");
-    }
-
-    const response = await fetch(`${rocketUrl.replace(/\/+$/, "")}/api/v1/chat.postMessage`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Auth-Token": rocketAuth.userToken,
-        "X-User-Id": rocketAuth.userId,
-      },
-      body: JSON.stringify({
-        roomId: notification.roomId,
-        text: replyText,
-      }),
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Failed to send Rocket.Chat reply: ${response.status} ${body}`);
-    }
+    await this.rocketChatService.postMessage(
+      appUserGoogleId,
+      notification.appUserEmail,
+      notification.roomId,
+      replyText,
+    );
 
     const updatedNotification = await this.botNotificationModel.findByIdAndUpdate(
       notification._id,

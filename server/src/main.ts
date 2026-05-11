@@ -31,4 +31,4 @@ async function bootstrap() {
 }
 
 void bootstrap();
-// Triggering restart to pick up .env changes
+// Triggering restart to pick up new routes and .env changes

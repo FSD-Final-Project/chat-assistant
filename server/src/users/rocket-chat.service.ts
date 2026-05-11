@@ -39,6 +39,7 @@ export class RocketChatService {
 
     // Immediately sync the sent message to our DB
     if (data.message) {
+      this.logger.log(`Syncing sent message for user ${googleId}, roomId: ${roomId}: ${data.message._id}`);
       await this.rocketSyncService.upsertMessages(
         googleId,
         email,
