@@ -81,7 +81,7 @@ export default function Login() {
               : 'Sign in to continue'}
           </h1>
           <h2 className="text-2xl font-bold text-center text-foreground mb-8">
-            Chat Assistant
+            Axon Chat Assistant
           </h2>
 
           <div className="space-y-4">
