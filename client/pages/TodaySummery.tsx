@@ -1,18 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { ChatGroup } from "@/components/chat/ChatGroup";
-import { Button } from "@/components/ui/button";
 import { TimePicker } from "@/components/ui/time-picker";
-import {
-    LineChart,
-    Line,
-    XAxis,
-    YAxis,
-    CartesianGrid,
-    Tooltip,
-    ResponsiveContainer,
-    Legend,
-} from "recharts";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/auth/AuthProvider";
+
+import { TodaySummaryTabs } from "@/components/today-summary/TodaySummaryTabs";
+import { TodaySummaryChatSidebar } from "@/components/today-summary/TodaySummaryChatSidebar";
+import { TodaySummaryDetails } from "@/components/today-summary/TodaySummaryDetails";
+import { TodaySummaryChart } from "@/components/today-summary/TodaySummaryChart";
 
 const chartData = [
     { name: "Item 1", green: 20, yellow: 15, red: 10 },
@@ -22,116 +17,153 @@ const chartData = [
     { name: "Item 5", green: 45, yellow: 42, red: 40 },
 ];
 
-const chatGroups = [
-    {
-        id: 1,
-        name: "The Bosses",
-        avatars: [
-            "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop",
-            "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop",
-        ],
-        preview: "they needed you to finish one task, add to your TODO",
-    },
-    {
-        id: 2,
-        name: "Bar, Ethan And Shalev",
-        avatars: [
-            "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=100&h=100&fit=crop",
-            "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=100&h=100&fit=crop",
-            "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=100&h=100&fit=crop",
-        ],
-        preview: "they just said hey today and asked for bla so I repl...",
-    },
-    {
-        id: 3,
-        name: "Family and Girl friend",
-        avatars: [
-            "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=100&h=100&fit=crop",
-            "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop",
-        ],
-        preview: "sent them that you love them❤️",
-    },
-];
-
 const tabs = ["All Chats", "Pending", "Completed"];
 
 export default function TodaySummary() {
+    const { user } = useAuth();
+    const queryClient = useQueryClient();
     const [activeTab, setActiveTab] = useState("All Chats");
-    const [activeChat, setActiveChat] = useState(2);
+    const [activeChatId, setActiveChatId] = useState<string | null>(null);
     const [startTime, setStartTime] = useState("15:00");
     const [endTime, setEndTime] = useState("20:30");
 
+    // Fetch Subscriptions
+    const { data: subscriptionsData, isLoading: isLoadingSubscriptions } = useQuery({
+        queryKey: ["rocket-subscriptions"],
+        queryFn: async () => {
+            const res = await fetch("/users/me/rocket-subscriptions");
+            if (!res.ok) throw new Error("Failed to fetch subscriptions");
+            return res.json();
+        }
+    });
+
+    const subscriptions = subscriptionsData?.subscriptions || [];
+
+    // Set first chat as active initially
+    useEffect(() => {
+        if (subscriptions.length > 0 && !activeChatId) {
+            setActiveChatId(subscriptions[0].roomId);
+        }
+    }, [subscriptions, activeChatId]);
+
+    // Fetch Messages for Active Chat
+    const { data: messagesData, isLoading: isLoadingMessages } = useQuery({
+        queryKey: ["rocket-messages", activeChatId],
+        queryFn: async () => {
+            if (!activeChatId) return { messages: [] };
+            const res = await fetch(`/users/me/rocket-rooms/${activeChatId}/messages`);
+            if (!res.ok) throw new Error("Failed to fetch messages");
+            return res.json();
+        },
+        enabled: !!activeChatId
+    });
+
+    const recentMessages = messagesData?.messages || [];
+    
+    // Sort messages so the oldest is first, newest is at the bottom
+    const sortedMessages = useMemo(() => {
+        return [...recentMessages].sort((a, b) => {
+            const dateA = new Date(a.payload?.ts?.$date || a.payload?.ts).getTime();
+            const dateB = new Date(b.payload?.ts?.$date || b.payload?.ts).getTime();
+            return dateA - dateB;
+        });
+    }, [recentMessages]);
+
+    const lastMessage = sortedMessages.length > 0 ? sortedMessages[sortedMessages.length - 1] : null;
+    const lastMessageText = lastMessage ? String(lastMessage.payload?.msg || "") : "";
+    const lastMessageId = lastMessage ? (lastMessage.messageId || lastMessage._id) : null;
+    const lastMessageSenderId = lastMessage?.payload?.u?._id;
+    const isLastMessageFromMe = !!lastMessageSenderId && lastMessageSenderId === subscriptionsData?.myRocketUserId;
+
+    // Fetch Auto-Reply Suggestion
+    const { data: suggestionData, isLoading: isLoadingSuggestion } = useQuery({
+        queryKey: ["rocket-suggestion", activeChatId, lastMessageText],
+        queryFn: async () => {
+            if (!activeChatId || !lastMessageText || isLastMessageFromMe) return null;
+            const res = await fetch(`/users/me/rocket-rooms/${activeChatId}/auto-reply-suggestion`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ messageText: lastMessageText, messageId: lastMessageId })
+            });
+            if (!res.ok) throw new Error("Failed to fetch suggestion");
+            return res.json();
+        },
+        enabled: !!activeChatId && !!lastMessageText && !isLastMessageFromMe
+    });
+
+    const suggestion = suggestionData?.suggestion || null;
+
+    // Post Message Mutation
+    const postMessageMutation = useMutation({
+        mutationFn: async (text: string) => {
+            if (!activeChatId) return null;
+            const res = await fetch(`/users/me/rocket-rooms/${activeChatId}/messages`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text })
+            });
+            if (!res.ok) throw new Error("Failed to post message");
+            return res.json();
+        },
+        onSuccess: () => {
+            // Invalidate messages and suggestion (since context changed)
+            queryClient.invalidateQueries({ queryKey: ["rocket-messages", activeChatId] });
+            queryClient.invalidateQueries({ queryKey: ["rocket-suggestion", activeChatId] });
+
+            // Close relevant notifications
+            if (activeChatId) {
+                fetch(`/users/me/bot-notifications/rooms/${activeChatId}/dismiss`, {
+                    method: "POST",
+                    credentials: "include",
+                }).catch(err => console.error("Failed to dismiss notifications:", err));
+            }
+        }
+    });
+
+    const handleSendSuggestion = async (text: string) => {
+        await postMessageMutation.mutateAsync(text);
+    };
+
+    // Formatted Chat Groups
+    const formattedChatGroups = subscriptions.map((sub: any) => {
+        const name = sub.payload?.name || sub.payload?.fname || "Unknown Chat";
+        return {
+            id: sub.roomId,
+            name,
+            avatars: [sub.avatarUrl],
+            preview: sub.payload?.lastMessage?.msg || "No recent messages",
+        };
+    });
+
     return (
-        <DashboardLayout title="Today Summary" subtitle="16 Chats Found">
+        <DashboardLayout title="Today Summary" subtitle={`${subscriptions.length} Chats Found`}>
             {/* Tabs */}
-            <div className="flex gap-2 mb-6 w-fit">
-                {tabs.map((tab) => (
-                    <Button
-                        key={tab}
-                        variant={activeTab === tab ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setActiveTab(tab)}
-                        className="rounded-full"
-                    >
-                        {tab}
-                    </Button>
-                ))}
-            </div>
+            <TodaySummaryTabs 
+                tabs={tabs} 
+                activeTab={activeTab} 
+                onTabChange={setActiveTab} 
+            />
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Chart Section */}
-                <div className="lg:col-span-2 glass-card rounded-2xl p-6 animate-fade-in">
-                    <ResponsiveContainer width="100%" height={270}>
-                        <LineChart data={chartData}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                            <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" />
-                            <YAxis stroke="hsl(var(--muted-foreground))" />
-                            <Tooltip
-                                contentStyle={{
-                                    background: "hsl(var(--card))",
-                                    border: "1px solid hsl(var(--border))",
-                                    borderRadius: "8px",
-                                }}
-                            />
-                            <Legend />
-                            <Line
-                                type="monotone"
-                                dataKey="green"
-                                stroke="hsl(var(--chart-green))"
-                                strokeWidth={2}
-                                dot={{ fill: "hsl(var(--chart-green))" }}
-                            />
-                            <Line
-                                type="monotone"
-                                dataKey="yellow"
-                                stroke="hsl(var(--chart-yellow))"
-                                strokeWidth={2}
-                                dot={{ fill: "hsl(var(--chart-yellow))" }}
-                            />
-                            <Line
-                                type="monotone"
-                                dataKey="red"
-                                stroke="hsl(var(--chart-red))"
-                                strokeWidth={2}
-                                dot={{ fill: "hsl(var(--chart-red))" }}
-                            />
-                        </LineChart>
-                    </ResponsiveContainer>
-                </div>
+                {/* Detailed View */}
+                <TodaySummaryDetails 
+                    activeChatId={activeChatId}
+                    isLoadingSubscriptions={isLoadingSubscriptions}
+                    isLoadingMessages={isLoadingMessages}
+                    sortedMessages={sortedMessages}
+                    isLoadingSuggestion={isLoadingSuggestion}
+                    suggestion={suggestion}
+                    user={user}
+                    onSendSuggestion={handleSendSuggestion}
+                    isSendingSuggestion={postMessageMutation.isPending}
+                />
 
                 {/* Chat Groups */}
-                <div className="space-y-3">
-                    {chatGroups.map((group) => (
-                        <ChatGroup
-                            key={group.id}
-                            name={group.name}
-                            avatars={group.avatars}
-                            preview={group.preview}
-                            isActive={activeChat === group.id}
-                            onClick={() => setActiveChat(group.id)}
-                        />
-                    ))}
-                </div>
+                <TodaySummaryChatSidebar 
+                    formattedChatGroups={formattedChatGroups}
+                    activeChatId={activeChatId}
+                    onChatSelect={setActiveChatId}
+                />
             </div>
 
             {/* Time Range */}
@@ -141,23 +173,8 @@ export default function TodaySummary() {
                 <TimePicker value={endTime} onChange={(time) => setEndTime(time)} />
             </div>
 
-            <div className="mt-6 glass-card rounded-2xl p-6 animate-fade-in">
-                <div className="flex items-start gap-4">
-                    <div className="w-1 h-full bg-primary rounded-full" />
-                    <div className="text-foreground">
-                        <p className="mb-4">
-                            Lorem ipsum is standard placeholder text used in publishing and design to show how a
-                            layout looks with text, without distracting from the visual design, because it's nonsensical,
-                            jumbled Latin derived from Cicero's works, used by printers since the 1500s and
-                        </p>
-                        <h4 className="font-semibold mb-2">Key characteristics</h4>
-                        <ul className="list-disc list-inside space-y-1 text-muted-foreground">
-                            <li>Purpose: To fill space in a design mockup to demonstrate typography and layout.</li>
-                            <li>Origin: A scrambled Latin text from Cicero's De finibus bonorum et malorum, meaning "pain itself".</li>
-                        </ul>
-                    </div>
-                </div>
-            </div>
+            {/* Dashboard Chart Below */}
+            <TodaySummaryChart data={chartData} />
         </DashboardLayout>
     );
 }

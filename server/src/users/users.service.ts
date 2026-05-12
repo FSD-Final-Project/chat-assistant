@@ -139,14 +139,24 @@ export class UsersService {
   }
 
   async saveRefreshToken(googleId: string, refreshTokenHash: string, refreshTokenExpiresAt: Date): Promise<void> {
+    // Use an aggregation pipeline update to safely merge fields even if localAuth is null
     await this.userModel.updateOne(
       { googleId },
-      {
-        $set: {
-          "localAuth.refreshTokenHash": refreshTokenHash,
-          "localAuth.refreshTokenExpiresAt": refreshTokenExpiresAt,
+      [
+        {
+          $set: {
+            localAuth: {
+              $mergeObjects: [
+                { $ifNull: ["$localAuth", {}] },
+                {
+                  refreshTokenHash: refreshTokenHash,
+                  refreshTokenExpiresAt: refreshTokenExpiresAt,
+                },
+              ],
+            },
+          },
         },
-      },
+      ],
     );
   }
 

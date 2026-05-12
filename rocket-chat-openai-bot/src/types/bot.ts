@@ -42,6 +42,7 @@ export interface BotContextPayload {
   subscription: ManagedSubscription;
   currentSummary: SummaryContextItem | null;
   relevantSummaries: SummaryContextItem[];
+  suggestedReply?: string;
   context?: ContextEntry[];
 }
 
@@ -51,19 +52,9 @@ export interface BotConfig {
   internalApiKey: string;
   openAiApiKey: string;
   openAiBaseUrl: string;
-  openAiModel: string;
-  ollamaApiKey: string;
-  ollamaBaseUrl: string;
-  ollamaModel: string;
-  llmFallbackToOllama: boolean;
   summaryModel: string;
   embeddingModel: string;
-  systemPrompt: string;
   rcRequestIntervalMs: number;
   rcRetryBackoffMs: number;
   maxContextMessages: number;
-  botTriggerPrefix: string;
-  mirrorUserStyle: boolean;
-  mirrorStyleSampleSize: number;
-  speakAsUser: boolean;
 }

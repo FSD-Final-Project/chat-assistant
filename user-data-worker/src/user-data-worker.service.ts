@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { isRealMessage } from "../../common/message-utils";
 
 interface RocketIntegrationIdentity {
   googleId: string;
@@ -357,29 +358,29 @@ export class UserDataWorkerService {
         `${endpoint}?${params.toString()}`,
       );
 
-      const messages = history.messages ?? [];
-      if (messages.length === 0) {
-        this.logger.log(
-          `Incremental sync ${this.incrementalSyncIteration}: no new messages for room ${roomId} (${integration.email})`,
-        );
+      const allMessages = history.messages ?? [];
+      const messages = allMessages.filter(isRealMessage);
+
+      this.logger.log(`[${integration.email}] Fetched ${allMessages.length} messages, ${messages.length} remaining after filtering system/empty messages.`);
+
+      if (allMessages.length === 0) {
         break;
       }
 
-      this.logger.log(
-        `Incremental sync ${this.incrementalSyncIteration}: fetched ${messages.length} message(s) for room ${roomId} (${integration.email})`,
-      );
-
-      for (const batch of this.chunkItems(messages, this.mainServerBatchSize)) {
-        await this.postToMainServer("/users/internal/rocket-sync/messages", {
-          googleId: integration.googleId,
-          email: integration.email,
-          roomId,
-          roomType,
-          messages: batch,
-        });
+      if (messages.length > 0) {
+        for (const batch of this.chunkItems(messages, this.mainServerBatchSize)) {
+          this.logger.log(`[${integration.email}] Posting batch of ${batch.length} messages to main server for roomId: ${roomId}`);
+          await this.postToMainServer("/users/internal/rocket-sync/messages", {
+            googleId: integration.googleId,
+            email: integration.email,
+            roomId,
+            roomType,
+            messages: batch,
+          });
+        }
       }
 
-      const lastTimestamp = this.getMessageDate(messages[messages.length - 1]);
+      const lastTimestamp = this.getMessageDate(allMessages[allMessages.length - 1]);
       if (!lastTimestamp) {
         break;
       }
@@ -387,7 +388,7 @@ export class UserDataWorkerService {
       this.setRoomWatermark(integration.googleId, roomId, lastTimestamp);
       oldest = lastTimestamp;
 
-      if (messages.length < 100) {
+      if (allMessages.length < 100) {
         break;
       }
     }
@@ -499,8 +500,8 @@ export class UserDataWorkerService {
       .map((message) => {
         const sender =
           message.u &&
-          typeof message.u === "object" &&
-          typeof (message.u as { username?: unknown }).username === "string"
+            typeof message.u === "object" &&
+            typeof (message.u as { username?: unknown }).username === "string"
             ? (message.u as { username: string }).username
             : "unknown";
 
@@ -651,11 +652,11 @@ export class UserDataWorkerService {
         `Rocket.Chat request for '${integration.email}'`,
         url,
         {
-        headers: {
-          "Content-Type": "application/json",
-          "X-Auth-Token": integration.userToken,
-          "X-User-Id": integration.userId,
-        },
+          headers: {
+            "Content-Type": "application/json",
+            "X-Auth-Token": integration.userToken,
+            "X-User-Id": integration.userId,
+          },
         },
       );
 
@@ -920,20 +921,20 @@ export class UserDataWorkerService {
       const message = error instanceof Error ? error.message : String(error);
       const causeMessage =
         error instanceof Error &&
-        "cause" in error &&
-        error.cause &&
-        typeof error.cause === "object" &&
-        "message" in error.cause &&
-        typeof (error.cause as { message?: unknown }).message === "string"
+          "cause" in error &&
+          error.cause &&
+          typeof error.cause === "object" &&
+          "message" in error.cause &&
+          typeof (error.cause as { message?: unknown }).message === "string"
           ? (error.cause as { message: string }).message
           : undefined;
       const codeMessage =
         error instanceof Error &&
-        "cause" in error &&
-        error.cause &&
-        typeof error.cause === "object" &&
-        "code" in error.cause &&
-        typeof (error.cause as { code?: unknown }).code === "string"
+          "cause" in error &&
+          error.cause &&
+          typeof error.cause === "object" &&
+          "code" in error.cause &&
+          typeof (error.cause as { code?: unknown }).code === "string"
           ? (error.cause as { code: string }).code
           : undefined;
 

@@ -11,12 +11,15 @@
     "sourceMap": true,
     "outDir": "./dist",
     "baseUrl": "./",
+    "paths": {
+      "@common/*": ["../common/*"]
+    },
     "incremental": true,
     "strict": true,
     "skipLibCheck": true,
     "moduleResolution": "node",
     "types": ["node"]
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "../common/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

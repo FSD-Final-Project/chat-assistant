@@ -5,6 +5,7 @@ import { EventEmitter } from "events";
 import { BotNotificationRecord, type BotNotificationDocument, type BotNotificationKind } from "./schemas/bot-notification.schema";
 import type { RocketPreferenceColor } from "./schemas/rocket-subscription.schema";
 import { UsersService } from "./users.service";
+import { RocketChatService } from "./rocket-chat.service";
 
 interface CreateBotNotificationInput {
   appUserGoogleId: string;
@@ -29,6 +30,7 @@ export class BotNotificationService {
     @InjectModel(BotNotificationRecord.name)
     private readonly botNotificationModel: Model<BotNotificationDocument>,
     private readonly usersService: UsersService,
+    private readonly rocketChatService: RocketChatService,
   ) {}
 
   async createOrUpdatePending(input: CreateBotNotificationInput): Promise<BotNotificationDocument> {
@@ -107,6 +109,25 @@ export class BotNotificationService {
     return notification;
   }
 
+  async dismissByRoomId(appUserGoogleId: string, roomId: string): Promise<void> {
+    const result = await this.botNotificationModel.updateMany(
+      {
+        appUserGoogleId,
+        roomId,
+        status: "pending",
+      },
+      {
+        $set: {
+          status: "dismissed",
+        },
+      },
+    );
+
+    if (result.modifiedCount > 0) {
+      await this.emitPendingChanged(appUserGoogleId);
+    }
+  }
+
   async approveAndSend(
     appUserGoogleId: string,
     notificationId: string,
@@ -118,33 +139,17 @@ export class BotNotificationService {
     }
 
     const user = await this.usersService.findByGoogleId(appUserGoogleId);
-    const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
-    if (!rocketAuth) {
-      throw new Error("Rocket.Chat credentials not found for user");
+    if (!user) {
+        throw new Error("User not found");
     }
 
-    const rocketUrl = process.env.RC_URL?.trim();
-    if (!rocketUrl) {
-      throw new Error("Missing RC_URL on server");
-    }
-
-    const response = await fetch(`${rocketUrl.replace(/\/+$/, "")}/api/v1/chat.postMessage`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Auth-Token": rocketAuth.userToken,
-        "X-User-Id": rocketAuth.userId,
-      },
-      body: JSON.stringify({
-        roomId: notification.roomId,
-        text: replyText,
-      }),
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Failed to send Rocket.Chat reply: ${response.status} ${body}`);
-    }
+    // Use the central RocketChatService which handles both posting and immediate DB sync
+    await this.rocketChatService.postMessage(
+      appUserGoogleId,
+      user.email,
+      notification.roomId,
+      replyText,
+    );
 
     const updatedNotification = await this.botNotificationModel.findByIdAndUpdate(
       notification._id,

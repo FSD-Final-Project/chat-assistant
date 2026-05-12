@@ -1,5 +1,4 @@
 export class BotState {
-  public authToken = "";
   public userId = "";
   private processedMessageIds = new Set<string>();
 

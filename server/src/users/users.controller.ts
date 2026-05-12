@@ -1,9 +1,11 @@
-import { Body, Controller, Get, Post, Query, Req, Res } from "@nestjs/common";
+import { Body, Controller, Get, Logger, Post, Query, Req, Res } from "@nestjs/common";
 import type { Request, Response } from "express";
 import type { SessionUser } from "../auth/session-user";
 import { BotNotificationService } from "./bot-notification.service";
 import { RocketSyncService } from "./rocket-sync.service";
 import { UsersService } from "./users.service";
+import { RocketChatService } from "./rocket-chat.service";
+import { EmbeddingService } from "./embedding.service";
 import type { RocketPreferenceColor } from "./schemas/rocket-subscription.schema";
 
 interface RocketIntegrationBody {
@@ -48,6 +50,14 @@ interface InternalBotContextBody {
   contextLimit?: number;
   queryEmbedding?: number[];
   message?: Record<string, unknown>;
+  includeSuggestion?: boolean;
+}
+
+interface InternalMessageSuggestionBody {
+  googleId?: string;
+  roomId?: string;
+  messageId?: string;
+  suggestion?: string;
 }
 
 interface InternalRocketSummaryBody {
@@ -132,11 +142,14 @@ interface HistoryStatsQuery {
 
 @Controller("users")
 export class UsersController {
+  private readonly logger = new Logger(UsersController.name);
   constructor(
     private readonly usersService: UsersService,
     private readonly rocketSyncService: RocketSyncService,
+    private readonly embeddingService: EmbeddingService,
     private readonly botNotificationService: BotNotificationService,
-  ) {}
+    private readonly rocketChatService: RocketChatService,
+  ) { }
 
   private isInternalRequestAuthorized(request: Request): boolean {
     const internalApiKey = process.env.INTERNAL_API_KEY;
@@ -361,28 +374,34 @@ export class UsersController {
         response.status(401).json({ message: "Unauthorized" });
         return;
       }
-    } catch (error) {
+    } catch (error: any) {
+      this.logger.error(`Auth authorization failed: ${error.message}`, error.stack);
       response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
       return;
     }
 
-    const users = await this.usersService.findAllWithRocketIntegration();
-    response.status(200).json(
-      users
-        .map((user) => {
-          const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
-          if (!rocketAuth) {
-            return null;
-          }
+    try {
+      const users = await this.usersService.findAllWithRocketIntegration();
+      response.status(200).json(
+        users
+          .map((user) => {
+            const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
+            if (!rocketAuth) {
+              return null;
+            }
 
-          return {
-            googleId: user.googleId,
-            email: user.email,
-            ...rocketAuth,
-          };
-        })
-        .filter(Boolean),
-    );
+            return {
+              googleId: user.googleId,
+              email: user.email,
+              ...rocketAuth,
+            };
+          })
+          .filter(Boolean),
+      );
+    } catch (error: any) {
+      this.logger.error(`Failed to get all internal rocket auth: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Failed to get all internal rocket auth" });
+    }
   }
 
   @Get("internal/rocket-auth")
@@ -396,7 +415,8 @@ export class UsersController {
         response.status(401).json({ message: "Unauthorized" });
         return;
       }
-    } catch (error) {
+    } catch (error: any) {
+      this.logger.error(`Internal auth authorization failed: ${error.message}`, error.stack);
       response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
       return;
     }
@@ -407,19 +427,24 @@ export class UsersController {
       return;
     }
 
-    const user = await this.usersService.findByEmail(normalizedEmail);
-    if (!user) {
-      response.status(404).json({ message: "User not found" });
-      return;
-    }
+    try {
+      const user = await this.usersService.findByEmail(normalizedEmail);
+      if (!user) {
+        response.status(404).json({ message: "User not found" });
+        return;
+      }
 
-    const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
-    if (!rocketAuth) {
-      response.status(404).json({ message: "Rocket.Chat credentials not found for user" });
-      return;
-    }
+      const rocketAuth = this.usersService.getDecryptedRocketIntegration(user);
+      if (!rocketAuth) {
+        response.status(404).json({ message: "Rocket.Chat credentials not found for user" });
+        return;
+      }
 
-    response.status(200).json(rocketAuth);
+      response.status(200).json(rocketAuth);
+    } catch (error: any) {
+      this.logger.error(`Failed to get internal rocket auth for ${normalizedEmail}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
   }
 
   @Get("internal/bot-subscriptions")
@@ -575,7 +600,8 @@ export class UsersController {
         response.status(401).json({ message: "Unauthorized" });
         return;
       }
-    } catch (error) {
+    } catch (error: any) {
+      this.logger.error(`Sync subscriptions authorization failed: ${error.message}`, error.stack);
       response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
       return;
     }
@@ -593,15 +619,21 @@ export class UsersController {
       return;
     }
 
-    if (mode === "full") {
-      await this.rocketSyncService.reconcileSubscriptions(googleId, email, subscriptions);
-    } else {
-      await this.rocketSyncService.applySubscriptionDelta(
-        googleId,
-        email,
-        subscriptions,
-        removedSubscriptionIds,
-      );
+    try {
+      if (mode === "full") {
+        await this.rocketSyncService.reconcileSubscriptions(googleId, email, subscriptions);
+      } else {
+        await this.rocketSyncService.applySubscriptionDelta(
+          googleId,
+          email,
+          subscriptions,
+          removedSubscriptionIds,
+        );
+      }
+    } catch (error: any) {
+      this.logger.error(`Failed to sync subscriptions for ${email}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+      return;
     }
 
     response.status(200).json({
@@ -623,7 +655,8 @@ export class UsersController {
         response.status(401).json({ message: "Unauthorized" });
         return;
       }
-    } catch (error) {
+    } catch (error: any) {
+      this.logger.error(`Sync messages authorization failed: ${error.message}`, error.stack);
       response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
       return;
     }
@@ -639,8 +672,13 @@ export class UsersController {
       return;
     }
 
-    await this.rocketSyncService.upsertMessages(googleId, email, roomId, roomType, messages);
-    response.status(200).json({ success: true, count: messages.length });
+    try {
+      await this.rocketSyncService.upsertMessages(googleId, email, roomId, roomType, messages);
+      response.status(200).json({ success: true, count: messages.length });
+    } catch (error: any) {
+      this.logger.error(`Failed to sync messages for ${email} in room ${roomId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
   }
 
   @Post("internal/rocket-sync/status")
@@ -737,6 +775,15 @@ export class UsersController {
       suggestedReply: body.suggestedReply?.trim(),
     });
 
+    if (body.suggestedReply?.trim()) {
+      await this.embeddingService.saveSuggestion(
+        googleId,
+        roomId,
+        messageId,
+        body.suggestedReply.trim(),
+      );
+    }
+
     response.status(200).json({
       success: true,
       notificationId: notification._id,
@@ -796,6 +843,38 @@ export class UsersController {
       success: true,
       summaryId: savedSummary?._id,
     });
+  }
+
+  @Post("internal/message-suggestions")
+  async saveInternalMessageSuggestion(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: InternalMessageSuggestionBody,
+  ) {
+    try {
+      if (!this.isInternalRequestAuthorized(request)) {
+        response.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+    } catch {
+      response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
+      return;
+    }
+
+    const googleId = body.googleId?.trim();
+    const roomId = body.roomId?.trim();
+    const messageId = body.messageId?.trim();
+    const suggestion = body.suggestion?.trim();
+
+    if (!googleId || !roomId || !messageId || !suggestion) {
+      response.status(400).json({
+        message: "googleId, roomId, messageId, and suggestion are required",
+      });
+      return;
+    }
+
+    await this.embeddingService.saveSuggestion(googleId, roomId, messageId, suggestion);
+    response.status(200).json({ success: true });
   }
 
   @Post("internal/bot-context")
@@ -873,7 +952,35 @@ export class UsersController {
       },
       currentSummary: currentSummary ? this.mapSummaryContext(currentSummary) : null,
       relevantSummaries,
+      suggestedReply:
+        body.includeSuggestion && messageId
+          ? await this.getOrCreateBotSuggestion(googleId, roomId, messageId, message.msg as string, {
+              currentSummary: currentSummary?.summary,
+              relevantSummaries: relevantSummaries.map((s) => ({ roomId: s.roomId, summary: s.summary })),
+            })
+          : undefined,
     });
+  }
+
+  private async getOrCreateBotSuggestion(
+    googleId: string,
+    roomId: string,
+    messageId: string,
+    messageText: string,
+    context: any,
+  ): Promise<string> {
+    const cached = await this.embeddingService.findCachedSuggestion(googleId, messageId);
+    if (cached) return cached;
+
+    const suggestion = await this.embeddingService.getAutoReplySuggestion(
+      googleId,
+      roomId,
+      messageText,
+      context,
+    );
+
+    await this.embeddingService.saveSuggestion(googleId, roomId, messageId, suggestion);
+    return suggestion;
   }
 
   @Post("me/rocket-integration")
@@ -896,39 +1003,43 @@ export class UsersController {
       return;
     }
 
-    const user = await this.usersService.saveRocketIntegration(
-      sessionUser.id,
-      rocketUserToken,
-      rocketUserId,
-    );
-
-    if (!user) {
-      response.status(404).json({ message: "User not found" });
-      return;
-    }
-
     try {
-      await this.triggerWorkerSyncForUser(sessionUser.id);
-    } catch (error) {
-      console.error(
-        `[RocketIntegration] Failed to trigger worker sync for ${sessionUser.id}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+      const user = await this.usersService.saveRocketIntegration(
+        sessionUser.id,
+        rocketUserToken,
+        rocketUserId,
       );
-    }
 
-    response.status(200).json({
-      success: true,
-      user: {
-        id: user.googleId,
-        email: user.email,
-        name: user.name,
-        givenName: user.givenName,
-        familyName: user.familyName,
-        picture: user.picture,
-        hasRocketIntegration: this.usersService.hasRocketIntegration(user),
-      },
-    });
+      if (!user) {
+        response.status(404).json({ message: "User not found" });
+        return;
+      }
+
+      try {
+        await this.triggerWorkerSyncForUser(sessionUser.id);
+      } catch (error) {
+        console.error(
+          `[RocketIntegration] Failed to trigger worker sync for ${sessionUser.id}: ${error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+
+      response.status(200).json({
+        success: true,
+        user: {
+          id: user.googleId,
+          email: user.email,
+          name: user.name,
+          givenName: user.givenName,
+          familyName: user.familyName,
+          picture: user.picture,
+          hasRocketIntegration: this.usersService.hasRocketIntegration(user),
+        },
+      });
+    } catch (error: any) {
+      this.logger.error(`Failed to save rocket integration for user ${sessionUser.id}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
   }
 
   @Get("me/rocket-subscriptions")
@@ -939,25 +1050,26 @@ export class UsersController {
       return;
     }
 
-    const subscriptions = await this.rocketSyncService.listSubscriptions(sessionUser.id);
-    const user = await this.usersService.findByGoogleId(sessionUser.id);
-    const rocketIntegration = user?.rocketIntegration;
-    response.status(200).json({
-      sync: {
-        status: rocketIntegration?.syncStatus ?? "completed",
-        startedAt: rocketIntegration?.syncStartedAt,
-        completedAt: rocketIntegration?.syncCompletedAt,
-        error: rocketIntegration?.syncError,
-      },
-      subscriptions: subscriptions.map((subscription) => ({
-        id: subscription.subscriptionId,
-        roomId: subscription.roomId,
-        roomType: subscription.roomType,
-        preferenceColor: subscription.preferenceColor,
-        payload: subscription.payload,
-        avatarUrl: `/users/me/rocket-subscriptions/${encodeURIComponent(subscription.subscriptionId)}/avatar`,
-      })),
-    });
+    try {
+      const user = await this.usersService.findByGoogleId(sessionUser.id);
+      const rocketIntegration = this.usersService.getDecryptedRocketIntegration(user);
+      const subscriptions = await this.rocketSyncService.listSubscriptions(sessionUser.id);
+      
+      response.status(200).json({
+        myRocketUserId: rocketIntegration?.userId,
+        subscriptions: subscriptions.map((subscription) => ({
+          id: subscription.subscriptionId,
+          roomId: subscription.roomId,
+          roomType: subscription.roomType,
+          preferenceColor: subscription.preferenceColor,
+          payload: subscription.payload,
+          avatarUrl: `/users/me/rocket-subscriptions/${encodeURIComponent(subscription.subscriptionId)}/avatar`,
+        })),
+      });
+    } catch (error: any) {
+      this.logger.error(`Failed to list subscriptions for user ${sessionUser.id}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
   }
 
   @Get("me/bot-activation-preferences")
@@ -1300,6 +1412,24 @@ export class UsersController {
     response.status(200).json({ success: true });
   }
 
+  @Post("me/bot-notifications/rooms/:roomId/dismiss")
+  async dismissMyRoomBotNotifications(@Req() request: Request, @Res() response: Response) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const roomId = request.params.roomId as string;
+    if (!roomId) {
+      response.status(400).json({ message: "roomId is required" });
+      return;
+    }
+
+    await this.botNotificationService.dismissByRoomId(sessionUser.id, roomId);
+    response.status(200).json({ success: true });
+  }
+
   @Get("me/rocket-subscriptions/:subscriptionId/avatar")
   async getMyRocketSubscriptionAvatar(
     @Req() request: Request,
@@ -1375,5 +1505,179 @@ export class UsersController {
     }
 
     response.status(200).send(buffer);
+  }
+
+  @Post("me/rocket-rooms/:roomId/auto-reply-suggestion")
+  async getAutoReplySuggestion(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: { messageText: string; messageId?: string },
+  ) {
+    const sessionUser = request.user as SessionUser | undefined;
+    if (!request.isAuthenticated() || !sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const roomId = request.params.roomId as string;
+    const messageText = body.messageText?.trim();
+    const messageId = body.messageId?.trim();
+
+    if (!roomId || !messageText) {
+      response.status(400).json({ message: "roomId and messageText are required" });
+      return;
+    }
+
+    try {
+      // 1. Check message suggestion cache
+      if (messageId) {
+        const cached = await this.embeddingService.findCachedSuggestion(sessionUser.id, messageId);
+        if (cached) {
+          response.status(200).json({ suggestion: cached });
+          return;
+        }
+      }
+
+      // 2. Check notifications for this message
+      if (messageId) {
+        const notification = await this.botNotificationService.findPendingById(sessionUser.id, messageId);
+        if (notification?.suggestedReply) {
+          response.status(200).json({ suggestion: notification.suggestedReply });
+          return;
+        }
+      }
+
+      // 3. Gather context for a fresh suggestion
+      const subscription = await this.rocketSyncService.findSubscriptionByRoomId(sessionUser.id, roomId);
+      let context: any = undefined;
+
+      if (subscription) {
+        const currentSummary = await this.rocketSyncService.findSummaryBySubscriptionId(
+          sessionUser.id,
+          subscription.subscriptionId,
+        );
+        const allSummaries = await this.rocketSyncService.listSummaries(sessionUser.id);
+        const relevantSummaries = this.rankRelevantSummaries(
+          allSummaries,
+          undefined, // no query embedding for now
+          roomId,
+          4,
+        );
+
+        context = {
+          currentSummary: currentSummary?.summary,
+          relevantSummaries: relevantSummaries.map((s) => ({ roomId: s.roomId, summary: s.summary })),
+        };
+      }
+
+      // 4. Generate suggestion
+      const suggestion = await this.embeddingService.getAutoReplySuggestion(
+        sessionUser.id,
+        roomId,
+        messageText,
+        context,
+      );
+
+      // 5. Cache it if we have a messageId
+      if (messageId) {
+        await this.embeddingService.saveSuggestion(sessionUser.id, roomId, messageId, suggestion);
+      }
+
+      response.status(200).json({ suggestion });
+    } catch (error: any) {
+      this.logger.error(`Failed to generate auto-reply suggestion for user ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Failed to generate auto-reply suggestion" });
+    }
+  }
+
+  @Get("me/rocket-rooms/:roomId/messages")
+  async getRoomMessages(
+    @Req() request: Request,
+    @Res() response: Response,
+  ) {
+    const sessionUser = request.user as SessionUser | undefined;
+    if (!request.isAuthenticated() || !sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const roomId = request.params.roomId as string;
+    if (!roomId) {
+      response.status(400).json({ message: "roomId is required" });
+      return;
+    }
+
+    try {
+      const messages = await this.rocketSyncService.findMessagesByRoomId(sessionUser.id, roomId);
+      response.status(200).json({ messages });
+    } catch (error: any) {
+      this.logger.error(`Failed to fetch room messages for user ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Failed to fetch room messages" });
+    }
+  }
+
+  @Post("me/rocket-rooms/:roomId/messages")
+  async postRoomMessage(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: { text: string },
+  ) {
+    const sessionUser = request.user as SessionUser | undefined;
+    if (!request.isAuthenticated() || !sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const roomId = request.params.roomId as string;
+    const text = body.text?.trim();
+
+    if (!roomId || !text) {
+      response.status(400).json({ message: "roomId and text are required" });
+      return;
+    }
+
+    try {
+      const message = await this.rocketChatService.postMessage(
+        sessionUser.id,
+        sessionUser.email,
+        roomId,
+        text,
+      );
+      response.status(200).json({ success: true, message });
+    } catch (error: any) {
+      this.logger.error(`Failed to post message for user ${sessionUser.id} in room ${roomId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: error.message || "Failed to post message to Rocket.Chat" });
+    }
+  }
+
+  @Post("internal/bot-post-message")
+  async internalBotPostMessage(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Body() body: { googleId: string; email: string; roomId: string; text: string },
+  ) {
+    try {
+      if (!this.isInternalRequestAuthorized(request)) {
+        response.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+    } catch {
+      response.status(500).json({ message: "Missing INTERNAL_API_KEY on server" });
+      return;
+    }
+
+    const { googleId, email, roomId, text } = body;
+    if (!googleId || !email || !roomId || !text) {
+      response.status(400).json({ message: "googleId, email, roomId, and text are required" });
+      return;
+    }
+
+    try {
+      const message = await this.rocketChatService.postMessage(googleId, email, roomId, text);
+      response.status(200).json({ success: true, message });
+    } catch (error: any) {
+      this.logger.error(`Internal: Failed to post message for user ${googleId} in room ${roomId}: ${error.message}`, error.stack);
+      response.status(500).json({ message: error.message || "Failed to post message" });
+    }
   }
 }

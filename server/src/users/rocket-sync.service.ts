@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import {
@@ -29,6 +29,7 @@ interface RocketMessagePayload {
 
 @Injectable()
 export class RocketSyncService {
+  private readonly logger = new Logger(RocketSyncService.name);
   constructor(
     @InjectModel(RocketSubscriptionRecord.name)
     private readonly subscriptionModel: Model<RocketSubscriptionDocument>,
@@ -36,7 +37,7 @@ export class RocketSyncService {
     private readonly messageModel: Model<RocketMessageDocument>,
     @InjectModel(RocketSummaryRecord.name)
     private readonly summaryModel: Model<RocketSummaryDocument>,
-  ) {}
+  ) { }
 
   async upsertSubscriptions(
     appUserGoogleId: string,
@@ -172,7 +173,8 @@ export class RocketSyncService {
       }));
 
     if (messageOps.length > 0) {
-      await this.messageModel.bulkWrite(messageOps, { ordered: false });
+      const result = await this.messageModel.bulkWrite(messageOps, { ordered: false });
+      this.logger.log(`Upserted ${messageOps.length} messages for roomId: ${roomId}. Modified: ${result.modifiedCount}, Upserted: ${result.upsertedCount}`);
     }
   }
 
@@ -249,6 +251,17 @@ export class RocketSyncService {
       },
       { new: true },
     );
+  }
+
+  async findMessagesByRoomId(
+    appUserGoogleId: string,
+    roomId: string,
+    limit: number = 50,
+  ): Promise<RocketMessageDocument[]> {
+    return this.messageModel
+      .find({ appUserGoogleId, roomId })
+      .sort({ "payload.ts": -1 })
+      .limit(limit);
   }
 
   async upsertSummary(input: {

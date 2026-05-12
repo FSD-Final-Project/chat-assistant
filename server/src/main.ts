@@ -31,3 +31,4 @@ async function bootstrap() {
 }
 
 void bootstrap();
+// Triggering restart to pick up .env changes
