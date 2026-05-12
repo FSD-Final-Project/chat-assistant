@@ -1221,7 +1221,7 @@ export class UsersController {
 
     const startDate = query.start ? new Date(query.start) : undefined;
     const endDate = query.end ? new Date(query.end) : undefined;
-    const limit = query.limit ? Number.parseInt(query.limit, 10) : 8;
+    const limit = query.limit ? Number.parseInt(query.limit, 10) : 5;
 
     if (startDate && Number.isNaN(startDate.getTime())) {
       response.status(400).json({ message: "Invalid start date" });
@@ -1236,7 +1236,7 @@ export class UsersController {
     const activeChats = await this.rocketSyncService.listActiveChats(sessionUser.id, {
       startDate,
       endDate,
-      limit: Number.isFinite(limit) && limit > 0 ? limit : 8,
+      limit: Number.isFinite(limit) && limit > 0 ? limit : 5,
     });
 
     response.status(200).json({

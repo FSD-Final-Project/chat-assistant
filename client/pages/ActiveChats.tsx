@@ -14,6 +14,8 @@ interface ActiveChatItem {
     avatarUrl: string;
 }
 
+const ACTIVE_CHAT_LIMIT = 5;
+
 export default function ActiveChats() {
     const [startDate, setStartDate] = useState<Date>(new Date(Date.now() - 6 * 24 * 60 * 60 * 1000));
     const [endDate, setEndDate] = useState<Date>(new Date());
@@ -31,7 +33,7 @@ export default function ActiveChats() {
                 const params = new URLSearchParams({
                     start: startDate.toISOString(),
                     end: endDate.toISOString(),
-                    limit: "8",
+                    limit: ACTIVE_CHAT_LIMIT.toString(),
                 });
                 const response = await fetch(`/users/me/active-chats?${params.toString()}`, {
                     credentials: "include",
