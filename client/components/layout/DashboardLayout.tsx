@@ -1,6 +1,7 @@
 import { ReactNode } from "react";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { AppLogo } from "./AppLogo";
 
 interface DashboardLayoutProps {
     children: ReactNode;
@@ -41,9 +42,7 @@ export function DashboardLayout({
                                 className="w-full bg-card pl-10"
                             />
                         </div>
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center self-end rounded-full bg-gradient-to-br from-primary via-purple-500 to-pink-500 sm:self-auto">
-                            <span className="text-xs font-bold text-white">-/+X</span>
-                        </div>
+                        <AppLogo className="h-10 w-10 shrink-0 self-end sm:self-auto [&>span]:text-xs" />
                     </div>
                 </header>
 
