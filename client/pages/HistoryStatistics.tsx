@@ -30,6 +30,33 @@ interface MiniPieChartProps {
     colors: string[];
 }
 
+interface ChartTooltipProps {
+    active?: boolean;
+    payload?: Array<{
+        name?: string;
+        value?: number;
+        color?: string;
+        payload?: { label?: string };
+    }>;
+}
+
+const MessagesTooltip = ({ active, payload }: ChartTooltipProps) => {
+    if (!active || !payload?.length) return null;
+
+    const label = payload[0]?.payload?.label ?? "Unknown";
+
+    return (
+        <div className="bg-card border border-border rounded-lg px-3 py-2 shadow-lg text-sm">
+            <p className="font-semibold text-foreground mb-1">Time: {label}</p>
+            {payload.map((item) => (
+                <p key={item.name} className="text-muted-foreground">
+                    <span style={{ color: item.color }}>{item.name}</span>: {item.value ?? 0} messages
+                </p>
+            ))}
+        </div>
+    );
+};
+
 const MiniPieChart = ({ data, colors }: MiniPieChartProps) => {
     const total = data.reduce((sum, item) => sum + item.value, 0);
     const displayData = total === 0 ? [{ name: "No data", value: 1 }] : data;
@@ -77,18 +104,6 @@ const MiniPieChart = ({ data, colors }: MiniPieChartProps) => {
     );
 };
 
-function formatDateTick(dateStr: string): string {
-    const [, month, day] = dateStr.split("-");
-    return `${month}/${day}`;
-}
-
-function formatHourTick(hour: number): string {
-    if (hour === 0) return "12am";
-    if (hour === 12) return "12pm";
-    if (hour % 6 !== 0) return "";
-    return hour < 12 ? `${hour}am` : `${hour - 12}pm`;
-}
-
 function formatTimeSaved(seconds: number): string {
     const mins = Math.floor(seconds / 60);
     if (mins === 0) return "0m";
@@ -106,7 +121,11 @@ export default function HistoryStatistics() {
     const [startDate, setStartDate] = useState<Date>(thirtyDaysAgo);
     const [endDate, setEndDate] = useState<Date>(today);
 
-    const { data, loading } = useHistoryStats(startDate, endDate);
+    const { data, loading, error } = useHistoryStats(startDate, endDate);
+    const hasPreferenceData = (data?.lineChartData ?? []).some(
+        (item) => item.red > 0 || item.yellow > 0 || item.green > 0,
+    );
+    const hasTimeData = (data?.timeOfDayData ?? []).some((item) => item.value > 0);
 
     const aiMessagesData = [
         { name: "Auto", value: data?.aiMessages.auto ?? 0 },
@@ -126,6 +145,10 @@ export default function HistoryStatistics() {
     ];
 
     const timeSavedLabel = `Time Saved! ${formatTimeSaved(data?.timeSavedSeconds ?? 0)}`;
+    const formatChartLabel = (value: string) =>
+        data?.lineChartData.find((item) => item.time === value)?.label ??
+        data?.timeOfDayData.find((item) => item.time === value)?.label ??
+        value;
 
     const statCards = [
         {
@@ -165,58 +188,59 @@ export default function HistoryStatistics() {
             >
                 {/* Multi-line Chart */}
                 <div className="glass-card rounded-2xl p-6 animate-fade-in">
-                    <h3 className="text-lg font-semibold mb-4 text-foreground">Red vs. Yellow vs. Green</h3>
-                    <ResponsiveContainer width="100%" height={220}>
-                        <LineChart data={data?.lineChartData ?? []}>
+                    <h3 className="text-lg font-semibold mb-4 text-foreground">Messages by preference</h3>
+                    <ResponsiveContainer width="100%" height={260}>
+                        <LineChart data={data?.lineChartData ?? []} margin={{ top: 8, right: 16, left: 8, bottom: 36 }}>
                             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                             <XAxis
-                                dataKey="date"
+                                dataKey="time"
                                 stroke="hsl(var(--muted-foreground))"
-                                tickFormatter={formatDateTick}
+                                tickFormatter={formatChartLabel}
                                 interval="preserveStartEnd"
+                                height={52}
+                                minTickGap={12}
+                                tickMargin={10}
+                                tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
                             />
-                            <YAxis stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
-                            <Tooltip
-                                contentStyle={{
-                                    background: "hsl(var(--card))",
-                                    border: "1px solid hsl(var(--border))",
-                                    borderRadius: "8px",
-                                }}
+                            <YAxis
+                                stroke="hsl(var(--muted-foreground))"
+                                allowDecimals={false}
+                                label={{ value: "Messages", angle: -90, position: "insideLeft" }}
                             />
+                            <Tooltip content={<MessagesTooltip />} />
                             <Legend />
                             <Line type="monotone" dataKey="red" stroke="hsl(var(--chart-red))" strokeWidth={2} dot={false} />
                             <Line type="monotone" dataKey="yellow" stroke="hsl(var(--chart-yellow))" strokeWidth={2} dot={false} />
                             <Line type="monotone" dataKey="green" stroke="hsl(var(--chart-green))" strokeWidth={2} dot={false} />
                         </LineChart>
                     </ResponsiveContainer>
+                    {!loading && !error && !hasPreferenceData && (
+                        <p className="mt-2 text-sm text-muted-foreground">No messages found in this time range.</p>
+                    )}
                 </div>
 
                 {/* Time of Day Chart */}
                 <div className="glass-card rounded-2xl p-6 animate-fade-in" style={{ animationDelay: "100ms" }}>
-                    <h3 className="text-lg font-semibold mb-4 text-foreground">most active time of the day</h3>
-                    <ResponsiveContainer width="100%" height={220}>
-                        <LineChart data={data?.timeOfDayData ?? []}>
+                    <h3 className="text-lg font-semibold mb-4 text-foreground">Messages over selected time</h3>
+                    <ResponsiveContainer width="100%" height={260}>
+                        <LineChart data={data?.timeOfDayData ?? []} margin={{ top: 8, right: 16, left: 8, bottom: 36 }}>
                             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                             <XAxis
-                                dataKey="hour"
+                                dataKey="time"
                                 stroke="hsl(var(--muted-foreground))"
-                                tickFormatter={formatHourTick}
-                                interval={0}
+                                tickFormatter={formatChartLabel}
+                                interval="preserveStartEnd"
+                                height={52}
+                                minTickGap={12}
+                                tickMargin={10}
+                                tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
                             />
-                            <YAxis stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
-                            <Tooltip
-                                contentStyle={{
-                                    background: "hsl(var(--card))",
-                                    border: "1px solid hsl(var(--border))",
-                                    borderRadius: "8px",
-                                }}
-                                labelFormatter={(hour) => {
-                                    const h = Number(hour);
-                                    if (h === 0) return "12:00 am";
-                                    if (h === 12) return "12:00 pm";
-                                    return h < 12 ? `${h}:00 am` : `${h - 12}:00 pm`;
-                                }}
+                            <YAxis
+                                stroke="hsl(var(--muted-foreground))"
+                                allowDecimals={false}
+                                label={{ value: "Messages", angle: -90, position: "insideLeft" }}
                             />
+                            <Tooltip content={<MessagesTooltip />} />
                             <Line
                                 type="monotone"
                                 dataKey="value"
@@ -226,8 +250,17 @@ export default function HistoryStatistics() {
                             />
                         </LineChart>
                     </ResponsiveContainer>
+                    {!loading && !error && !hasTimeData && (
+                        <p className="mt-2 text-sm text-muted-foreground">No messages found in this time range.</p>
+                    )}
                 </div>
             </div>
+
+            {error && (
+                <div className="mb-8 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                    {error}
+                </div>
+            )}
 
             {/* Stat Cards */}
             <div className={`grid grid-cols-2 lg:grid-cols-4 gap-6 transition-opacity duration-300 ${loading ? "opacity-40" : ""}`}>

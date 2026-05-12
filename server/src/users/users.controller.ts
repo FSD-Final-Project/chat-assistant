@@ -283,6 +283,32 @@ export class UsersController {
     );
   }
 
+  private parseHistoryStartDate(value: string | undefined): Date | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
+      return new Date(year, month - 1, day, 0, 0, 0, 0);
+    }
+
+    return new Date(value);
+  }
+
+  private parseHistoryEndDate(value: string | undefined): Date | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
+      return new Date(year, month - 1, day, 23, 59, 59, 999);
+    }
+
+    return new Date(value);
+  }
+
   private mapBotActivationPreferences(user: Parameters<UsersService["getBotActivationPreferences"]>[0]) {
     return this.usersService.getBotActivationPreferences(user);
   }
@@ -1208,8 +1234,8 @@ export class UsersController {
       return;
     }
 
-    const startDate = query.start ? new Date(query.start) : undefined;
-    const endDate = query.end ? new Date(query.end) : undefined;
+    const startDate = this.parseHistoryStartDate(query.start);
+    const endDate = this.parseHistoryEndDate(query.end);
 
     if (startDate && Number.isNaN(startDate.getTime())) {
       response.status(400).json({ message: "Invalid start date" });
@@ -1222,8 +1248,8 @@ export class UsersController {
     }
 
     const [lineChartData, timeOfDayData, totalChats, botStats] = await Promise.all([
-      this.rocketSyncService.aggregateMessagesByDayAndColor(sessionUser.id, startDate, endDate),
-      this.rocketSyncService.aggregateMessagesByHour(sessionUser.id, startDate, endDate),
+      this.rocketSyncService.aggregateMessagesByTimeAndColor(sessionUser.id, startDate, endDate),
+      this.rocketSyncService.aggregateMessagesByTime(sessionUser.id, startDate, endDate),
       this.rocketSyncService.countDistinctActiveRooms(sessionUser.id, startDate, endDate),
       this.botNotificationService.aggregateStats(sessionUser.id, startDate, endDate),
     ]);

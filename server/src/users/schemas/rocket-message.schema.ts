@@ -23,6 +23,9 @@ export class RocketMessageRecord {
   @Prop({ type: MongooseSchema.Types.Mixed, required: true })
   payload!: Record<string, unknown>;
 
+  @Prop({ index: true })
+  messageTimestamp?: Date;
+
   @Prop({ default: false, index: true })
   isChunked!: boolean;
 }
