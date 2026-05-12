@@ -1,21 +1,13 @@
 import { useState, useEffect, useMemo } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { TimePicker } from "@/components/ui/time-picker";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthProvider";
+import { useHistoryStats } from "@/hooks/useHistoryStats";
 
 import { TodaySummaryTabs } from "@/components/today-summary/TodaySummaryTabs";
 import { TodaySummaryChatSidebar } from "@/components/today-summary/TodaySummaryChatSidebar";
 import { TodaySummaryDetails } from "@/components/today-summary/TodaySummaryDetails";
 import { TodaySummaryChart } from "@/components/today-summary/TodaySummaryChart";
-
-const chartData = [
-    { name: "Item 1", green: 20, yellow: 15, red: 10 },
-    { name: "Item 2", green: 35, yellow: 28, red: 25 },
-    { name: "Item 3", green: 40, yellow: 35, red: 30 },
-    { name: "Item 4", green: 38, yellow: 40, red: 35 },
-    { name: "Item 5", green: 45, yellow: 42, red: 40 },
-];
 
 const tabs = ["All Chats", "Pending", "Completed"];
 
@@ -24,8 +16,8 @@ export default function TodaySummary() {
     const queryClient = useQueryClient();
     const [activeTab, setActiveTab] = useState("All Chats");
     const [activeChatId, setActiveChatId] = useState<string | null>(null);
-    const [startTime, setStartTime] = useState("15:00");
-    const [endTime, setEndTime] = useState("20:30");
+    const today = useMemo(() => new Date(), []);
+    const { data: todayStats, loading: isLoadingTodayStats, error: todayStatsError } = useHistoryStats(today, today);
 
     // Fetch Subscriptions
     const { data: subscriptionsData, isLoading: isLoadingSubscriptions } = useQuery({
@@ -166,15 +158,12 @@ export default function TodaySummary() {
                 />
             </div>
 
-            {/* Time Range */}
-            <div className="flex items-center gap-3 mt-6 light-card rounded-full px-4 py-2 w-fit">
-                <TimePicker value={startTime} onChange={(time) => setStartTime(time)} />
-                <span className="text-muted-foreground">To</span>
-                <TimePicker value={endTime} onChange={(time) => setEndTime(time)} />
-            </div>
-
             {/* Dashboard Chart Below */}
-            <TodaySummaryChart data={chartData} />
+            <TodaySummaryChart
+                data={todayStats?.lineChartData ?? []}
+                loading={isLoadingTodayStats}
+                error={todayStatsError}
+            />
         </DashboardLayout>
     );
 }

@@ -135,6 +135,11 @@ interface ActiveChatsQuery {
   limit?: string;
 }
 
+interface HistoryStatsQuery {
+  start?: string;
+  end?: string;
+}
+
 @Controller("users")
 export class UsersController {
   private readonly logger = new Logger(UsersController.name);
@@ -276,6 +281,32 @@ export class UsersController {
       parsed.getMonth() === month - 1 &&
       parsed.getDate() === day
     );
+  }
+
+  private parseHistoryStartDate(value: string | undefined): Date | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
+      return new Date(year, month - 1, day, 0, 0, 0, 0);
+    }
+
+    return new Date(value);
+  }
+
+  private parseHistoryEndDate(value: string | undefined): Date | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
+      return new Date(year, month - 1, day, 23, 59, 59, 999);
+    }
+
+    return new Date(value);
   }
 
   private mapBotActivationPreferences(user: Parameters<UsersService["getBotActivationPreferences"]>[0]) {
@@ -1188,6 +1219,54 @@ export class UsersController {
             chat.subscription!.subscriptionId,
           )}/avatar`,
         })),
+    });
+  }
+
+  @Get("me/history-stats")
+  async getMyHistoryStats(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Query() query: HistoryStatsQuery,
+  ) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const startDate = this.parseHistoryStartDate(query.start);
+    const endDate = this.parseHistoryEndDate(query.end);
+
+    if (startDate && Number.isNaN(startDate.getTime())) {
+      response.status(400).json({ message: "Invalid start date" });
+      return;
+    }
+
+    if (endDate && Number.isNaN(endDate.getTime())) {
+      response.status(400).json({ message: "Invalid end date" });
+      return;
+    }
+
+    const [lineChartData, timeOfDayData, totalChats, botStats] = await Promise.all([
+      this.rocketSyncService.aggregateMessagesByTimeAndColor(sessionUser.id, startDate, endDate),
+      this.rocketSyncService.aggregateMessagesByTime(sessionUser.id, startDate, endDate),
+      this.rocketSyncService.countDistinctActiveRooms(sessionUser.id, startDate, endDate),
+      this.botNotificationService.aggregateStats(sessionUser.id, startDate, endDate),
+    ]);
+
+    response.status(200).json({
+      totalChats,
+      lineChartData,
+      timeOfDayData,
+      aiMessages: {
+        auto: botStats.greenCount,
+        manual: botStats.manualCount,
+      },
+      reviewApprovals: {
+        approved: botStats.yellowApproved,
+        total: botStats.yellowTotal,
+      },
+      timeSavedSeconds: botStats.greenCount * 30,
     });
   }
 

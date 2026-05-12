@@ -57,4 +57,5 @@ export interface BotConfig {
   rcRequestIntervalMs: number;
   rcRetryBackoffMs: number;
   maxContextMessages: number;
+  botTriggerPrefix: string;
 }

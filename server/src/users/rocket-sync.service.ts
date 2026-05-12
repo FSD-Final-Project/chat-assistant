@@ -24,8 +24,11 @@ interface RocketSubscriptionPayload {
 
 interface RocketMessagePayload {
   _id?: string;
+  ts?: string | Date | { $date?: string | number | Date };
   [key: string]: unknown;
 }
+
+type MessageTimeBucket = "hour" | "day" | "month";
 
 @Injectable()
 export class RocketSyncService {
@@ -166,6 +169,7 @@ export class RocketSyncService {
               messageId: message._id,
               roomType,
               payload: message,
+              messageTimestamp: this.getMessageTimestamp(message),
             },
           },
           upsert: true,
@@ -176,6 +180,33 @@ export class RocketSyncService {
       const result = await this.messageModel.bulkWrite(messageOps, { ordered: false });
       this.logger.log(`Upserted ${messageOps.length} messages for roomId: ${roomId}. Modified: ${result.modifiedCount}, Upserted: ${result.upsertedCount}`);
     }
+  }
+
+  private getMessageTimestamp(message: RocketMessagePayload): Date | undefined {
+    const timestamp = message.ts;
+    if (timestamp instanceof Date && !Number.isNaN(timestamp.getTime())) {
+      return timestamp;
+    }
+
+    if (typeof timestamp === "string") {
+      const parsed = new Date(timestamp);
+      return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+    }
+
+    const dateValue =
+      timestamp && typeof timestamp === "object" && "$date" in timestamp
+        ? timestamp.$date
+        : undefined;
+    if (dateValue instanceof Date && !Number.isNaN(dateValue.getTime())) {
+      return dateValue;
+    }
+
+    if (typeof dateValue === "number" || typeof dateValue === "string") {
+      const parsed = new Date(dateValue);
+      return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+    }
+
+    return undefined;
   }
 
   async listSubscriptions(appUserGoogleId: string): Promise<RocketSubscriptionDocument[]> {
@@ -323,6 +354,313 @@ export class RocketSyncService {
     return this.summaryModel
       .find({ appUserGoogleId })
       .sort({ updatedAt: -1, createdAt: -1, roomId: 1 });
+  }
+
+  private getStatsTimestampExpression() {
+    const payloadTsDate = {
+      $getField: {
+        input: "$payload.ts",
+        field: { $literal: "$date" },
+      },
+    };
+
+    return {
+      $switch: {
+        branches: [
+          {
+            case: { $eq: [{ $type: "$messageTimestamp" }, "date"] },
+            then: "$messageTimestamp",
+          },
+          {
+            case: { $eq: [{ $type: "$payload.ts" }, "date"] },
+            then: "$payload.ts",
+          },
+          {
+            case: { $eq: [{ $type: "$payload.ts" }, "string"] },
+            then: {
+              $dateFromString: {
+                dateString: "$payload.ts",
+                onError: "$createdAt",
+                onNull: "$createdAt",
+              },
+            },
+          },
+          {
+            case: { $in: [{ $type: payloadTsDate }, ["int", "long", "double", "decimal"]] },
+            then: { $toDate: payloadTsDate },
+          },
+          {
+            case: { $eq: [{ $type: payloadTsDate }, "date"] },
+            then: payloadTsDate,
+          },
+          {
+            case: { $eq: [{ $type: payloadTsDate }, "string"] },
+            then: {
+              $dateFromString: {
+                dateString: payloadTsDate,
+                onError: "$createdAt",
+                onNull: "$createdAt",
+              },
+            },
+          },
+        ],
+        default: "$createdAt",
+      },
+    };
+  }
+
+  private getStatsMatch(
+    appUserGoogleId: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Record<string, unknown> {
+    return {
+      appUserGoogleId,
+      ...(startDate || endDate
+        ? {
+            statsTimestamp: {
+              ...(startDate ? { $gte: startDate } : {}),
+              ...(endDate ? { $lte: endDate } : {}),
+            },
+          }
+        : {}),
+    };
+  }
+
+  private getTimeBucket(startDate?: Date, endDate?: Date): MessageTimeBucket {
+    if (!startDate || !endDate) {
+      return "day";
+    }
+
+    const rangeMs = endDate.getTime() - startDate.getTime();
+    const twoDaysMs = 2 * 24 * 60 * 60 * 1000;
+    const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+
+    if (rangeMs <= twoDaysMs) {
+      return "hour";
+    }
+
+    if (rangeMs <= ninetyDaysMs) {
+      return "day";
+    }
+
+    return "month";
+  }
+
+  private getBucketFormat(bucket: MessageTimeBucket): string {
+    if (bucket === "hour") return "%Y-%m-%dT%H:00:00.000Z";
+    if (bucket === "month") return "%Y-%m-01";
+    return "%Y-%m-%d";
+  }
+
+  private getStatsTimeZone(): string {
+    return process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  }
+
+  private formatBucketLabel(bucketKey: string, bucket: MessageTimeBucket): string {
+    if (bucket === "hour") {
+      const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})/.exec(bucketKey);
+      if (!match) {
+        return bucketKey;
+      }
+
+      const [, , month, day, rawHour] = match;
+      const hour = Number.parseInt(rawHour, 10);
+      const suffix = hour < 12 ? "am" : "pm";
+      const displayHour = hour % 12 === 0 ? 12 : hour % 12;
+      return `${Number.parseInt(month, 10)}/${Number.parseInt(day, 10)} ${displayHour}${suffix}`;
+    }
+
+    if (bucket === "month") {
+      const [year, month] = bucketKey.split("-");
+      return `${month}/${year}`;
+    }
+
+    const [, month, day] = bucketKey.split("-");
+    return `${month}/${day}`;
+  }
+
+  private getBucketStart(value: Date, bucket: MessageTimeBucket): Date {
+    const date = new Date(value);
+    if (bucket === "hour") {
+      date.setMinutes(0, 0, 0);
+      return date;
+    }
+
+    if (bucket === "month") {
+      date.setDate(1);
+      date.setHours(0, 0, 0, 0);
+      return date;
+    }
+
+    date.setHours(0, 0, 0, 0);
+    return date;
+  }
+
+  private addBucket(value: Date, bucket: MessageTimeBucket): Date {
+    const date = new Date(value);
+    if (bucket === "hour") {
+      date.setHours(date.getHours() + 1);
+      return date;
+    }
+
+    if (bucket === "month") {
+      date.setMonth(date.getMonth() + 1);
+      return date;
+    }
+
+    date.setDate(date.getDate() + 1);
+    return date;
+  }
+
+  private formatBucketKey(value: Date, bucket: MessageTimeBucket): string {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+
+    if (bucket === "hour") {
+      const hour = String(value.getHours()).padStart(2, "0");
+      return `${year}-${month}-${day}T${hour}:00:00.000Z`;
+    }
+
+    if (bucket === "month") {
+      return `${year}-${month}-01`;
+    }
+
+    return `${year}-${month}-${day}`;
+  }
+
+  private listBucketKeys(
+    bucket: MessageTimeBucket,
+    startDate?: Date,
+    endDate?: Date,
+  ): string[] {
+    if (!startDate || !endDate) {
+      return [];
+    }
+
+    const keys: string[] = [];
+    let cursor = this.getBucketStart(startDate, bucket);
+    const end = this.getBucketStart(endDate, bucket);
+
+    while (cursor <= end) {
+      keys.push(this.formatBucketKey(cursor, bucket));
+      cursor = this.addBucket(cursor, bucket);
+    }
+
+    return keys;
+  }
+
+  async aggregateMessagesByTimeAndColor(
+    appUserGoogleId: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<{ time: string; label: string; red: number; yellow: number; green: number }[]> {
+    const bucket = this.getTimeBucket(startDate, endDate);
+    const bucketFormat = this.getBucketFormat(bucket);
+    const timezone = this.getStatsTimeZone();
+
+    const rawCounts = await this.messageModel.aggregate<{
+      _id: { time: string; roomId: string };
+      count: number;
+    }>([
+      { $addFields: { statsTimestamp: this.getStatsTimestampExpression() } },
+      { $match: this.getStatsMatch(appUserGoogleId, startDate, endDate) },
+      {
+        $group: {
+          _id: {
+            time: {
+              $dateToString: {
+                format: bucketFormat,
+                date: "$statsTimestamp",
+                timezone,
+              },
+            },
+            roomId: "$roomId",
+          },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const roomIds = [...new Set(rawCounts.map((r) => r._id.roomId))];
+    const subscriptions = await this.subscriptionModel
+      .find({ appUserGoogleId, roomId: { $in: roomIds } })
+      .select({ roomId: 1, preferenceColor: 1 });
+
+    const colorByRoomId = new Map(
+      subscriptions.map((s) => [s.roomId, s.preferenceColor] as const),
+    );
+
+    const byTime = new Map<string, { red: number; yellow: number; green: number }>();
+    for (const key of this.listBucketKeys(bucket, startDate, endDate)) {
+      byTime.set(key, { red: 0, yellow: 0, green: 0 });
+    }
+
+    for (const item of rawCounts) {
+      const color = colorByRoomId.get(item._id.roomId);
+      if (!color) continue;
+      const existing = byTime.get(item._id.time) ?? { red: 0, yellow: 0, green: 0 };
+      existing[color] = (existing[color] ?? 0) + item.count;
+      byTime.set(item._id.time, existing);
+    }
+
+    return [...byTime.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([time, counts]) => ({ time, label: this.formatBucketLabel(time, bucket), ...counts }));
+  }
+
+  async aggregateMessagesByTime(
+    appUserGoogleId: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<{ time: string; label: string; value: number }[]> {
+    const bucket = this.getTimeBucket(startDate, endDate);
+    const bucketFormat = this.getBucketFormat(bucket);
+    const timezone = this.getStatsTimeZone();
+
+    const raw = await this.messageModel.aggregate<{ _id: string; count: number }>([
+      { $addFields: { statsTimestamp: this.getStatsTimestampExpression() } },
+      { $match: this.getStatsMatch(appUserGoogleId, startDate, endDate) },
+      {
+        $group: {
+          _id: {
+            $dateToString: {
+              format: bucketFormat,
+              date: "$statsTimestamp",
+              timezone,
+            },
+          },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    const countByTime = new Map(raw.map((item) => [item._id, item.count]));
+    const bucketKeys = this.listBucketKeys(bucket, startDate, endDate);
+    const keys = bucketKeys.length > 0 ? bucketKeys : raw.map((item) => item._id);
+
+    return keys.map((time) => ({
+      time,
+      label: this.formatBucketLabel(time, bucket),
+      value: countByTime.get(time) ?? 0,
+    }));
+  }
+
+  async countDistinctActiveRooms(
+    appUserGoogleId: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<number> {
+    const result = await this.messageModel.aggregate<{ total: number }>([
+      { $addFields: { statsTimestamp: this.getStatsTimestampExpression() } },
+      { $match: this.getStatsMatch(appUserGoogleId, startDate, endDate) },
+      { $group: { _id: "$roomId" } },
+      { $count: "total" },
+    ]);
+
+    return result[0]?.total ?? 0;
   }
 
   async listActiveChats(

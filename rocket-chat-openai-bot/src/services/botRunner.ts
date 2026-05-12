@@ -5,7 +5,7 @@ import { RocketChatRealtimeClient } from "../clients/rocketChatRealtimeClient.js
 import { BotState } from "../state/botState.js";
 import { sleep } from "../utils/sleep.js";
 import { BotContextStore } from "./botContextStore.js";
-import { BotNotificationStore } from "./botNotificationStore.js";
+import { BotNotificationStore, MainServerRequestError } from "./botNotificationStore.js";
 import { ReplyService } from "./replyService.js";
 import { SubscriptionPreferenceStore } from "./subscriptionPreferenceStore.js";
 
@@ -141,11 +141,7 @@ export class BotRunner {
       const suggestedReply = contextPayload.suggestedReply || "I'm sorry, I couldn't generate a suggestion.";
 
       if (contextPayload.subscription.preferenceColor === "green") {
-        await this.botNotificationStore.postMessage({
-          auth: this.auth,
-          roomId: activeSubscription.roomId,
-          text: suggestedReply,
-        });
+        await this.postMessage(activeSubscription.roomId, suggestedReply);
         
         await this.botNotificationStore.saveSuggestion({
           auth: this.auth,
@@ -176,15 +172,43 @@ export class BotRunner {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error(`[${activeSubscription.roomId}] Failed to handle message: ${errorMessage}`);
       if (activeSubscription.preferenceColor === "green") {
-        await this.botNotificationStore.postMessage({
-          auth: this.auth,
-          roomId: activeSubscription.roomId,
-          text: "I hit an internal error while generating a reply. Please try again.",
-        });
+        try {
+          await this.postMessage(
+            activeSubscription.roomId,
+            "I hit an internal error while generating a reply. Please try again.",
+          );
+        } catch (postError) {
+          const postErrorMessage =
+            postError instanceof Error ? postError.message : String(postError);
+          console.error(
+            `[${activeSubscription.roomId}] Failed to post error reply: ${postErrorMessage}`,
+          );
+        }
       }
     } finally {
       this.state.markProcessed(message._id);
     }
+  }
+
+  private async postMessage(roomId: string, text: string): Promise<void> {
+    try {
+      await this.botNotificationStore.postMessage({
+        auth: this.auth,
+        roomId,
+        text,
+      });
+      return;
+    } catch (error) {
+      if (!(error instanceof MainServerRequestError) || error.status !== 404) {
+        throw error;
+      }
+
+      console.warn(
+        `[${roomId}] Main server bot-post-message endpoint returned 404. Posting directly to Rocket.Chat.`,
+      );
+    }
+
+    await this.rocketChatClient.postMessage(roomId, text);
   }
 
   private async updateSummary(
