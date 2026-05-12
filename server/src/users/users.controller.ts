@@ -1068,6 +1068,40 @@ export class UsersController {
     }
   }
 
+  @Post("me/rocket-integration/reset")
+  async resetRocketIntegration(@Req() request: Request, @Res() response: Response) {
+    const sessionUser = this.getAuthenticatedUser(request);
+    if (!sessionUser) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    try {
+      const user = await this.usersService.clearRocketIntegration(sessionUser.id);
+
+      if (!user) {
+        response.status(404).json({ message: "User not found" });
+        return;
+      }
+
+      response.status(200).json({
+        success: true,
+        user: {
+          id: user.googleId,
+          email: user.email,
+          name: user.name,
+          givenName: user.givenName,
+          familyName: user.familyName,
+          picture: user.picture,
+          hasRocketIntegration: this.usersService.hasRocketIntegration(user),
+        },
+      });
+    } catch (error: any) {
+      this.logger.error(`Failed to reset rocket integration for user ${sessionUser.id}: ${error.message}`, error.stack);
+      response.status(500).json({ message: "Internal server error" });
+    }
+  }
+
   @Get("me/rocket-subscriptions")
   async getMyRocketSubscriptions(@Req() request: Request, @Res() response: Response) {
     const sessionUser = this.getAuthenticatedUser(request);
