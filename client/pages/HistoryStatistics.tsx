@@ -145,6 +145,8 @@ export default function HistoryStatistics() {
     ];
 
     const timeSavedLabel = `Time Saved! ${formatTimeSaved(data?.timeSavedSeconds ?? 0)}`;
+    const totalChats = data?.totalChats ?? 0;
+    const subtitle = `${totalChats} chat${totalChats === 1 ? "" : "s"} found`;
     const formatChartLabel = (value: string) =>
         data?.lineChartData.find((item) => item.time === value)?.label ??
         data?.timeOfDayData.find((item) => item.time === value)?.label ??
@@ -174,7 +176,7 @@ export default function HistoryStatistics() {
     ];
 
     return (
-        <DashboardLayout title="History Statistics" subtitle={`${data?.totalChats ?? 0} Chats Found`}>
+        <DashboardLayout title="History Statistics" subtitle={subtitle}>
             {/* Date Range */}
             <div className="flex items-center gap-3 mb-8 light-card rounded-full px-4 py-2 w-fit">
                 <DatePicker value={startDate} onChange={(date) => date && setStartDate(date)} />

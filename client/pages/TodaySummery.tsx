@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAuth } from "@/auth/AuthProvider";
+import { useQuery } from "@tanstack/react-query";
 import { useHistoryStats } from "@/hooks/useHistoryStats";
 
 import { TodaySummaryTabs } from "@/components/today-summary/TodaySummaryTabs";
@@ -11,9 +10,19 @@ import { TodaySummaryChart } from "@/components/today-summary/TodaySummaryChart"
 
 const tabs = ["All Chats", "Pending", "Completed"];
 
+interface RocketSubscription {
+    roomId: string;
+    avatarUrl: string;
+    payload?: {
+        name?: string;
+        fname?: string;
+        lastMessage?: {
+            msg?: string;
+        };
+    };
+}
+
 export default function TodaySummary() {
-    const { user } = useAuth();
-    const queryClient = useQueryClient();
     const [activeTab, setActiveTab] = useState("All Chats");
     const [activeChatId, setActiveChatId] = useState<string | null>(null);
     const today = useMemo(() => new Date(), []);
@@ -29,7 +38,10 @@ export default function TodaySummary() {
         }
     });
 
-    const subscriptions = subscriptionsData?.subscriptions || [];
+    const subscriptions = useMemo<RocketSubscription[]>(
+        () => subscriptionsData?.subscriptions || [],
+        [subscriptionsData?.subscriptions]
+    );
 
     // Set first chat as active initially
     useEffect(() => {
@@ -38,86 +50,8 @@ export default function TodaySummary() {
         }
     }, [subscriptions, activeChatId]);
 
-    // Fetch Messages for Active Chat
-    const { data: messagesData, isLoading: isLoadingMessages } = useQuery({
-        queryKey: ["rocket-messages", activeChatId],
-        queryFn: async () => {
-            if (!activeChatId) return { messages: [] };
-            const res = await fetch(`/users/me/rocket-rooms/${activeChatId}/messages`);
-            if (!res.ok) throw new Error("Failed to fetch messages");
-            return res.json();
-        },
-        enabled: !!activeChatId
-    });
-
-    const recentMessages = messagesData?.messages || [];
-    
-    // Sort messages so the oldest is first, newest is at the bottom
-    const sortedMessages = useMemo(() => {
-        return [...recentMessages].sort((a, b) => {
-            const dateA = new Date(a.payload?.ts?.$date || a.payload?.ts).getTime();
-            const dateB = new Date(b.payload?.ts?.$date || b.payload?.ts).getTime();
-            return dateA - dateB;
-        });
-    }, [recentMessages]);
-
-    const lastMessage = sortedMessages.length > 0 ? sortedMessages[sortedMessages.length - 1] : null;
-    const lastMessageText = lastMessage ? String(lastMessage.payload?.msg || "") : "";
-    const lastMessageId = lastMessage ? (lastMessage.messageId || lastMessage._id) : null;
-    const lastMessageSenderId = lastMessage?.payload?.u?._id;
-    const isLastMessageFromMe = !!lastMessageSenderId && lastMessageSenderId === subscriptionsData?.myRocketUserId;
-
-    // Fetch Auto-Reply Suggestion
-    const { data: suggestionData, isLoading: isLoadingSuggestion } = useQuery({
-        queryKey: ["rocket-suggestion", activeChatId, lastMessageText],
-        queryFn: async () => {
-            if (!activeChatId || !lastMessageText || isLastMessageFromMe) return null;
-            const res = await fetch(`/users/me/rocket-rooms/${activeChatId}/auto-reply-suggestion`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ messageText: lastMessageText, messageId: lastMessageId })
-            });
-            if (!res.ok) throw new Error("Failed to fetch suggestion");
-            return res.json();
-        },
-        enabled: !!activeChatId && !!lastMessageText && !isLastMessageFromMe
-    });
-
-    const suggestion = suggestionData?.suggestion || null;
-
-    // Post Message Mutation
-    const postMessageMutation = useMutation({
-        mutationFn: async (text: string) => {
-            if (!activeChatId) return null;
-            const res = await fetch(`/users/me/rocket-rooms/${activeChatId}/messages`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text })
-            });
-            if (!res.ok) throw new Error("Failed to post message");
-            return res.json();
-        },
-        onSuccess: () => {
-            // Invalidate messages and suggestion (since context changed)
-            queryClient.invalidateQueries({ queryKey: ["rocket-messages", activeChatId] });
-            queryClient.invalidateQueries({ queryKey: ["rocket-suggestion", activeChatId] });
-
-            // Close relevant notifications
-            if (activeChatId) {
-                fetch(`/users/me/bot-notifications/rooms/${activeChatId}/dismiss`, {
-                    method: "POST",
-                    credentials: "include",
-                }).catch(err => console.error("Failed to dismiss notifications:", err));
-            }
-        }
-    });
-
-    const handleSendSuggestion = async (text: string) => {
-        await postMessageMutation.mutateAsync(text);
-    };
-
     // Formatted Chat Groups
-    const formattedChatGroups = subscriptions.map((sub: any) => {
+    const formattedChatGroups = subscriptions.map((sub) => {
         const name = sub.payload?.name || sub.payload?.fname || "Unknown Chat";
         return {
             id: sub.roomId,
@@ -141,13 +75,6 @@ export default function TodaySummary() {
                 <TodaySummaryDetails 
                     activeChatId={activeChatId}
                     isLoadingSubscriptions={isLoadingSubscriptions}
-                    isLoadingMessages={isLoadingMessages}
-                    sortedMessages={sortedMessages}
-                    isLoadingSuggestion={isLoadingSuggestion}
-                    suggestion={suggestion}
-                    user={user}
-                    onSendSuggestion={handleSendSuggestion}
-                    isSendingSuggestion={postMessageMutation.isPending}
                 />
 
                 {/* Chat Groups */}

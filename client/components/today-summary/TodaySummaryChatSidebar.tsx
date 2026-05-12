@@ -19,7 +19,7 @@ export function TodaySummaryChatSidebar({
     onChatSelect 
 }: TodaySummaryChatSidebarProps) {
     return (
-        <div className="space-y-3">
+        <div className="h-[280px] space-y-3 overflow-y-auto pr-2 lg:h-[320px]">
             {formattedChatGroups.map((group) => (
                 <ChatGroup
                     key={group.id}

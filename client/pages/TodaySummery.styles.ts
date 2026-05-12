@@ -1,12 +1,12 @@
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 
-export const makeStyles = () => {
+export const useTodaySummaryStyles = () => {
     return useMemo(() => ({
         // Detailed View Container
         detailsContainer: cn(
             "glass-card rounded-2xl p-6 animate-fade-in lg:col-span-2",
-            "flex flex-col xl:flex-row gap-6 items-stretch"
+            "flex flex-col"
         ),
         
         // Messages Section
@@ -33,10 +33,14 @@ export const makeStyles = () => {
         
         // Summary Card
         summaryCard: cn(
-            "p-5 rounded-xl bg-card border border-border/50",
+            "w-full p-5 rounded-xl bg-card border border-border/50",
             "shadow-sm relative overflow-hidden"
         ),
         summaryHeader: cn("text-sm font-semibold text-primary mb-2 flex items-center gap-2"),
+        developmentBadge: cn(
+            "ml-1 rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5",
+            "text-[10px] font-medium uppercase tracking-wide text-primary"
+        ),
         summaryText: cn("text-sm text-card-foreground leading-relaxed"),
         
         // Suggestions
