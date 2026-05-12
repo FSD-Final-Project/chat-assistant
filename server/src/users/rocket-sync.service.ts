@@ -653,9 +653,22 @@ export class RocketSyncService {
     startDate?: Date,
     endDate?: Date,
   ): Promise<number> {
+    const subscribedRoomIds = await this.subscriptionModel.distinct("roomId", {
+      appUserGoogleId,
+    });
+
+    if (subscribedRoomIds.length === 0) {
+      return 0;
+    }
+
     const result = await this.messageModel.aggregate<{ total: number }>([
       { $addFields: { statsTimestamp: this.getStatsTimestampExpression() } },
-      { $match: this.getStatsMatch(appUserGoogleId, startDate, endDate) },
+      {
+        $match: {
+          ...this.getStatsMatch(appUserGoogleId, startDate, endDate),
+          roomId: { $in: subscribedRoomIds },
+        },
+      },
       { $group: { _id: "$roomId" } },
       { $count: "total" },
     ]);

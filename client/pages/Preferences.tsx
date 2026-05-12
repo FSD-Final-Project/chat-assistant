@@ -590,8 +590,11 @@ export default function Preferences() {
 
                 {/* Bot Preferences */}
                 <div className="light-card animate-fade-in rounded-2xl p-4 sm:p-6" style={{ animationDelay: "100ms" }}>
-                    <h3 className="text-lg font-bold text-card-light-foreground mb-6 text-center">
+                    <h3 className="mb-6 flex items-center justify-center gap-2 text-lg font-bold text-card-light-foreground">
                         Bot preferences
+                        <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                            Under development
+                        </span>
                     </h3>
 
                     <div className="space-y-4">
