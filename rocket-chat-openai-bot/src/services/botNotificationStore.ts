@@ -14,6 +14,17 @@ interface CreateBotNotificationInput {
   suggestedReply?: string;
 }
 
+export class MainServerRequestError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly responseBody: string
+  ) {
+    super(message);
+    this.name = "MainServerRequestError";
+  }
+}
+
 export class BotNotificationStore {
   constructor(private readonly config: BotConfig) {}
 
@@ -88,7 +99,11 @@ export class BotNotificationStore {
 
     if (!response.ok) {
       const message = await response.text();
-      throw new Error(`Failed to post message via server: ${response.status} ${message}`);
+      throw new MainServerRequestError(
+        `Failed to post message via server: ${response.status} ${message}`,
+        response.status,
+        message,
+      );
     }
   }
 }

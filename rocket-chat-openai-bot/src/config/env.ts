@@ -65,5 +65,6 @@ export function loadConfig(): BotConfig {
     rcRequestIntervalMs: getNumberEnv("RC_REQUEST_INTERVAL_MS", 400),
     rcRetryBackoffMs: getNumberEnv("RC_RETRY_BACKOFF_MS", 5000),
     maxContextMessages: getNumberEnv("MAX_CONTEXT_MESSAGES", 12),
+    botTriggerPrefix: getOptionalEnv("BOT_TRIGGER_PREFIX"),
   };
 }
